@@ -52,19 +52,171 @@ local function get_dataform_definitions_file_path()
 end
 
 function dataform.go_to_ref()
-  local line = vim.fn.getline('.')
-  local _, _, schema, table_name = line:find('%${%s*ref%(%s*["\']([^"]+)["\']%s*,%s*["\']([^"]+)["\']%s*%)%s*}')
-  if not schema then
-      _, _, table_name = line:find('%${%s*ref%(%s*["\']([^"]+)["\']%s*%)%s*}')
+  local cursor_pos = vim.api.nvim_win_get_cursor(0)
+  local row, col = cursor_pos[1], cursor_pos[2]
+  local lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
+  local current_line = lines[row]
+
+  -- Improve word extraction to handle dots (e.g., constants.TAX_RATE)
+  local line = current_line
+  local col_start = col
+  while col_start > 0 and line:sub(col_start, col_start):match("[%w_%.]") do
+    col_start = col_start - 1
+  end
+  local col_end = col + 1
+  while col_end <= #line and line:sub(col_end, col_end):match("[%w_%.]") do
+    col_end = col_end + 1
+  end
+  local word = line:sub(col_start + 1, col_end - 1)
+  if word == "" then word = vim.fn.expand("<cword>") end
+
+  -- 1. Check for CTE navigation (SQL files only or SQL blocks)
+  local cte_pattern = "WITH%s+" .. word .. "%s+AS%s*%("
+  local cte_pattern_comma = ",%s*" .. word .. "%s+AS%s*%("
+  for i, line in ipairs(lines) do
+    if line:find(cte_pattern) or line:find(cte_pattern_comma) then
+      vim.api.nvim_win_set_cursor(0, {i, 0})
+      return
+    end
   end
 
-  local df_tables = dataform.compiled_project_table.tables or {}
-  local df_declarations = dataform.compiled_project_table.declarations or {}
-  local tables = vim.fn.extend(df_tables, df_declarations)
+  -- 2. Check for ${ ... } blocks (Ref/Resolve/JS)
+  local start_row, start_col, end_row, end_col
+  -- Find start of ${
+  for r = row, 1, -1 do
+    local line = lines[r]
+    local search_start = (r == row) and col or #line
+    -- Search backwards for ${
+    local s = line:sub(1, search_start + 1):reverse():find("{$", 1, true)
+    if s then
+      start_row = r
+      start_col = #line:sub(1, search_start + 1) - s
+      break
+    end
+  end
 
-  for _, table in pairs(tables) do
-    if table.target.name == table_name and (table.target.schema == schema or not schema)  then
-      return utils.open_file(table.fileName)
+  -- Find end of }
+  if start_row then
+    for r = row, #lines do
+      local line = lines[r]
+      local search_start = (r == row) and col or 0
+      local e = line:find("}", search_start + 1, true)
+      if e then
+        end_row = r
+        end_col = e
+        break
+      end
+    end
+  end
+
+  if start_row and end_row then
+    local block_content = ""
+    for r = start_row, end_row do
+      local line = lines[r]
+      if r == start_row and r == end_row then
+        block_content = line:sub(start_col + 1, end_col)
+      elseif r == start_row then
+        block_content = line:sub(start_col + 1)
+      elseif r == end_row then
+        block_content = block_content .. "\n" .. line:sub(1, end_col)
+      else
+        block_content = block_content .. "\n" .. line
+      end
+    end
+
+    -- Extract ref/resolve
+    local _, _, schema, table_name = block_content:find('ref%(%s*["\']([^"\']+)["\']%s*,%s*["\']([^"\']+)["\']%s*%)')
+    if not table_name then
+      _, _, table_name = block_content:find('ref%(%s*["\']([^"\']+)["\']%s*%)')
+    end
+    if not table_name then
+      _, _, schema, table_name = block_content:find('resolve%(%s*["\']([^"\']+)["\']%s*,%s*["\']([^"\']+)["\']%s*%)')
+    end
+    if not table_name then
+      _, _, table_name = block_content:find('resolve%(%s*["\']([^"\']+)["\']%s*%)')
+    end
+
+    if table_name then
+      local df_tables = dataform.compiled_project_table.tables or {}
+      local df_declarations = dataform.compiled_project_table.declarations or {}
+      local df_ops = dataform.compiled_project_table.operations or {}
+      local all_nodes = {}
+      for _, v in ipairs(df_tables) do table.insert(all_nodes, v) end
+      for _, v in ipairs(df_declarations) do table.insert(all_nodes, v) end
+      for _, v in ipairs(df_ops) do table.insert(all_nodes, v) end
+
+      for _, node in pairs(all_nodes) do
+        if node.target.name == table_name and (node.target.schema == schema or not schema) then
+          return utils.open_file(node.fileName)
+        end
+      end
+    end
+
+    -- JS variable navigation within ${ ... }
+    if word:find("%.") then
+      local parts = vim.split(word, "%.")
+      local js_module = parts[1]
+      local var_name = parts[2]
+
+      -- Check in includes/
+      local includes_file = "includes/" .. js_module .. ".js"
+      if vim.fn.filereadable(includes_file) == 1 then
+        utils.open_file(includes_file)
+        -- Try to find variable in that file
+        local file_lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
+        local pattern = "const%s+" .. var_name .. "%s*="
+        for i, line in ipairs(file_lines) do
+          if line:find(pattern) then
+            vim.api.nvim_win_set_cursor(0, {i, 0})
+            break
+          end
+        end
+        return
+      end
+
+      -- Check for require in js block
+      local blocks = dataform.get_sqlx_blocks()
+      if blocks.js.exists then
+        for i = blocks.js.start_line, blocks.js.end_line do
+          local line = lines[i]
+          local req_pattern = "const%s+" .. js_module .. "%s*=%s*require%([\"'](.+)[\"']%)"
+          local _, _, req_path = line:find(req_pattern)
+          if req_path then
+            if req_path:sub(1,1) ~= "/" and req_path:sub(1,2) ~= "./" then
+               req_path = "includes/" .. req_path
+            end
+            if req_path:sub(-3) ~= ".js" then
+               req_path = req_path .. ".js"
+            end
+            if vim.fn.filereadable(req_path) == 1 then
+              utils.open_file(req_path)
+              return
+            end
+          end
+        end
+      end
+    end
+  end
+
+  -- 3. Check for local JS variable in JS block
+  local blocks = dataform.get_sqlx_blocks()
+  if blocks.js.exists then
+    if row >= blocks.js.start_line and row <= blocks.js.end_line then
+      -- Already in JS block, maybe searching for definition within it
+    else
+      -- Search for word definition in JS block
+      local var_pattern = "const%s+" .. word .. "%s*="
+      local var_pattern_let = "let%s+" .. word .. "%s*="
+      local var_pattern_var = "var%s+" .. word .. "%s*="
+      local func_pattern = "function%s+" .. word .. "%s*%("
+
+      for i = blocks.js.start_line, blocks.js.end_line do
+        local line = lines[i]
+        if line:find(var_pattern) or line:find(var_pattern_let) or line:find(var_pattern_var) or line:find(func_pattern) then
+          vim.api.nvim_win_set_cursor(0, {i, 0})
+          return
+        end
+      end
     end
   end
 end
@@ -282,6 +434,91 @@ function dataform.compile_on_save()
   if dataform.config.compile_on_save then
     dataform.compile()
   end
+end
+
+function dataform.get_sqlx_blocks()
+  local lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
+  local in_major_block = false
+  local brace_depth = 0
+  local current_block_name = ""
+
+  local blocks = {
+    config = { exists = false, start_line = 0, end_line = 0 },
+    js = { exists = false, start_line = 0, end_line = 0 },
+    pre_operations = {},
+    post_operations = {},
+    sql = { exists = false, start_line = 0, end_line = 0 }
+  }
+
+  local start_line = 0
+
+  for i, line in ipairs(lines) do
+    local trimmed = vim.trim(line)
+    if #trimmed > 0 then
+      local _, open_braces = line:gsub("{", "")
+      local _, closed_braces = line:gsub("}", "")
+      brace_depth = brace_depth + open_braces - closed_braces
+
+      if not in_major_block then
+        if trimmed:find("^config%s*{") then
+          current_block_name = "config"
+          blocks.config.start_line = i
+          in_major_block = true
+          if brace_depth == 0 then
+            blocks.config.end_line = i
+            blocks.config.exists = true
+            in_major_block = false
+          end
+        elseif trimmed:find("^js%s*{") then
+          current_block_name = "js"
+          blocks.js.start_line = i
+          in_major_block = true
+          if brace_depth == 0 then
+            blocks.js.end_line = i
+            blocks.js.exists = true
+            in_major_block = false
+          end
+        elseif trimmed:find("^pre_operations%s*{") then
+          current_block_name = "pre_operations"
+          start_line = i
+          in_major_block = true
+          if brace_depth == 0 then
+            table.insert(blocks.pre_operations, { start_line = i, end_line = i, exists = true })
+            in_major_block = false
+          end
+        elseif trimmed:find("^post_operations%s*{") then
+          current_block_name = "post_operations"
+          start_line = i
+          in_major_block = true
+          if brace_depth == 0 then
+            table.insert(blocks.post_operations, { start_line = i, end_line = i, exists = true })
+            in_major_block = false
+          end
+        else
+          if not blocks.sql.exists then
+            blocks.sql.start_line = i
+            blocks.sql.exists = true
+          end
+          blocks.sql.end_line = i
+        end
+      elseif brace_depth == 0 then
+        if current_block_name == "config" then
+          blocks.config.end_line = i
+          blocks.config.exists = true
+        elseif current_block_name == "js" then
+          blocks.js.end_line = i
+          blocks.js.exists = true
+        elseif current_block_name == "pre_operations" then
+          table.insert(blocks.pre_operations, { start_line = start_line, end_line = i, exists = true })
+        elseif current_block_name == "post_operations" then
+          table.insert(blocks.post_operations, { start_line = start_line, end_line = i, exists = true })
+        end
+        in_major_block = false
+        current_block_name = ""
+      end
+    end
+  end
+  return blocks
 end
 
 return dataform
