@@ -32,6 +32,7 @@ EOF
 autocmd BufWritePost *.sqlx execute "lua require('dataform').compile_on_save()"
 
 command! -nargs=0 DataformCompileFull lua require('dataform').get_compiled_sql_job()
+command! -nargs=0 DataformClearDiagnostics lua require('dataform').clear_diagnostics()
 command! -nargs=0 DataformCompileIncremental lua require('dataform').get_compiled_sql_job(true)
 command! -nargs=0 DataformGoToRef lua require('dataform').go_to_ref()
 command! -nargs=0 DataformHover lua require('dataform').hover()

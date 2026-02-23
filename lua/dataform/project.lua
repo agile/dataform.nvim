@@ -323,12 +323,64 @@ function dataform.hover()
   end
 end
 
+local ns = vim.api.nvim_create_namespace("dataform_diagnostics")
+
+function dataform.set_diagnostics(compiled_json)
+  vim.diagnostic.reset(ns)
+  if not compiled_json or not compiled_json.graphErrors or not compiled_json.graphErrors.compilationErrors then
+    return
+  end
+
+  local diagnostics_by_file = {}
+  for _, err in ipairs(compiled_json.graphErrors.compilationErrors) do
+    if err.fileName then
+      local file_diagnostics = diagnostics_by_file[err.fileName] or {}
+      table.insert(file_diagnostics, {
+        lnum = 0, -- Dataform CLI often doesn't give line numbers for graph errors
+        col = 0,
+        severity = vim.diagnostic.severity.ERROR,
+        message = err.message,
+        source = "Dataform",
+      })
+      diagnostics_by_file[err.fileName] = file_diagnostics
+    end
+  end
+
+  for fileName, diagnostics in pairs(diagnostics_by_file) do
+    -- Try to find the buffer for this file
+    local bufnr = -1
+    for _, buf in ipairs(vim.api.nvim_list_bufs()) do
+      if vim.api.nvim_buf_get_name(buf):find(fileName, 1, true) then
+        bufnr = buf
+        break
+      end
+    end
+
+    if bufnr ~= -1 then
+      vim.diagnostic.set(ns, bufnr, diagnostics)
+    end
+  end
+end
+
+function dataform.clear_diagnostics()
+  vim.diagnostic.reset(ns)
+end
+
 function dataform.compile()
   local command = "dataform compile"
   local status, content = utils.os_execute_with_status(command .. " --json", true)
-  if status == 0 then
-    dataform.compiled_project_table = vim.fn.json_decode(content)
-    utils.notify("Dataform compiled successfully.", vim.log.levels.INFO)
+  
+  -- Even if status != 0, we might have valid JSON with graph errors
+  local ok, decoded = pcall(vim.fn.json_decode, content)
+  if ok then
+    dataform.compiled_project_table = decoded
+    dataform.set_diagnostics(decoded)
+    
+    if status == 0 then
+      utils.notify("Dataform compiled successfully.", vim.log.levels.INFO)
+    else
+      utils.notify("Dataform compiled with errors.", vim.log.levels.WARN)
+    end
   else
     local _, content_error = utils.os_execute_with_status(command)
     utils.notify(
