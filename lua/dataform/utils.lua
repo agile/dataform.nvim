@@ -21,10 +21,19 @@ function utils.os_execute_with_status(command, json_output)
   return status, content
 end
 
-function utils.open_buffer_with_content(content)
+function utils.open_buffer_with_content(content, filetype, title)
   local bufnr = vim.api.nvim_create_buf(false, true)
   vim.api.nvim_buf_set_lines(bufnr, 0, -1, true, vim.split(content, "\n"))
-  vim.api.nvim_command("split")
+
+  if filetype then
+    vim.api.nvim_buf_set_option(bufnr, 'filetype', filetype)
+  end
+
+  if title then
+    vim.api.nvim_buf_set_name(bufnr, title)
+  end
+
+  vim.api.nvim_command("vsplit")
   vim.api.nvim_win_set_buf(0, bufnr)
 end
 

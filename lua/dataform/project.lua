@@ -8,6 +8,8 @@ dataform.compiled_project_table = {}
 
 local default_config = {
   compile_on_save = true,
+  formatter_bin = "sqlfluff",
+  formatter_options = { "fix", "--force", "-q" },
 }
 dataform.config = vim.deepcopy(default_config)
 
@@ -366,16 +368,60 @@ function dataform.clear_diagnostics()
   vim.diagnostic.reset(ns)
 end
 
+function dataform.format()
+  local bufnr = vim.api.nvim_get_current_buf()
+  local blocks = dataform.get_sqlx_blocks()
+  local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+
+  if not blocks.sql.exists or not dataform.config.formatter_bin or dataform.config.formatter_bin == "" then
+    return
+  end
+
+  local sql_lines = {}
+  for i = blocks.sql.start_line, blocks.sql.end_line do
+    table.insert(sql_lines, lines[i])
+  end
+
+  local tmp_sql = os.tmpname() .. ".sql"
+  local f = io.open(tmp_sql, "w")
+  if not f then return end
+  f:write(table.concat(sql_lines, "\n"))
+  f:close()
+
+  local options = table.concat(dataform.config.formatter_options or {}, " ")
+  local cmd = string.format("%s %s %s > /dev/null 2>&1",
+    dataform.config.formatter_bin, options, tmp_sql)
+
+  os.execute(cmd)
+
+  local f_in = io.open(tmp_sql, "r")
+  if f_in then
+    local formatted_sql = f_in:read("*all")
+    f_in:close()
+    os.remove(tmp_sql)
+
+    local formatted_sql_lines = vim.split(formatted_sql, "\n")
+    if formatted_sql_lines[#formatted_sql_lines] == "" then
+      table.remove(formatted_sql_lines)
+    end
+
+    vim.api.nvim_buf_set_lines(bufnr, blocks.sql.start_line - 1, blocks.sql.end_line, false, formatted_sql_lines)
+    utils.notify("SQL block formatted with " .. dataform.config.formatter_bin .. ".", vim.log.levels.INFO)
+  else
+    os.remove(tmp_sql)
+  end
+end
+
 function dataform.compile()
   local command = "dataform compile"
   local status, content = utils.os_execute_with_status(command .. " --json", true)
-  
+
   -- Even if status != 0, we might have valid JSON with graph errors
   local ok, decoded = pcall(vim.fn.json_decode, content)
   if ok then
     dataform.compiled_project_table = decoded
     dataform.set_diagnostics(decoded)
-    
+
     if status == 0 then
       utils.notify("Dataform compiled successfully.", vim.log.levels.INFO)
     else
@@ -406,18 +452,22 @@ function dataform.get_compiled_sql_job(incremental)
       if preOpsClean:sub(-1) ~= ";" and preOps ~= "" then preOps = preOps .. ";" end
 
       local composite_query = preOps .. table[queryKey] .. ";\n" .. postOps
-      local bq_command = "echo " .. vim.fn.shellescape(composite_query) .. " | bq query --dry_run"
+            local bq_command = "echo " .. vim.fn.shellescape(composite_query) .. " | bq query --dry_run"
 
-      local _, result = utils.os_execute_with_status(bq_command)
+            local _, result = utils.os_execute_with_status(bq_command)
 
-      local stats = utils.parse_dry_run_stats(result)
-      if stats then
-        utils.notify(stats, vim.log.levels.INFO)
-      else
-        utils.notify(result, vim.log.levels.WARN)
-      end
+            local stats = utils.parse_dry_run_stats(result)
+            local header = ""
+            if stats then
+              header = "-- " .. stats .. "\n\n"
+              utils.notify(stats, vim.log.levels.INFO)
+            else
+              header = "-- Dry run failed or stats unavailable\n-- " .. result:gsub("\n", "\n-- ") .. "\n\n"
+              utils.notify(result, vim.log.levels.WARN)
+            end
 
-      return utils.open_buffer_with_content(composite_query)
+            return utils.open_buffer_with_content(header .. composite_query, "sql", "Dataform Preview")
+
     end
   end
 end

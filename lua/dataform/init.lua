@@ -18,6 +18,7 @@ M.find_model_dependencies = dataform.find_model_dependencies
 M.find_model_dependents = dataform.find_model_dependents
 M.hover = dataform.hover
 M.clear_diagnostics = dataform.clear_diagnostics
+M.format = dataform.format
 M.completion_cmp_source = require("dataform.completion.cmp")
 
 return M

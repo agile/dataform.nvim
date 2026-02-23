@@ -36,6 +36,7 @@ command! -nargs=0 DataformClearDiagnostics lua require('dataform').clear_diagnos
 command! -nargs=0 DataformCompileIncremental lua require('dataform').get_compiled_sql_job(true)
 command! -nargs=0 DataformGoToRef lua require('dataform').go_to_ref()
 command! -nargs=0 DataformHover lua require('dataform').hover()
+command! -nargs=0 DataformFormat lua require('dataform').format()
 command! -nargs=0 DataformRunActionIncremental lua require('dataform').run_action_job()
 command! -nargs=0 DataformRunAction lua require('dataform').run_action_job(true)
 command! -nargs=0 DataformRunAll lua require('dataform').run_all()
