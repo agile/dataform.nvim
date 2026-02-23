@@ -44,3 +44,4 @@ command! -nargs=0 DataformRunAssertions lua require('dataform').run_assertions_j
 command! -nargs=1 DataformRunTag lua require('dataform').run_tag(<f-args>)
 command! -nargs=0 DataformFindDependencies lua require('dataform').find_model_dependencies()
 command! -nargs=0 DataformFindDependents lua require('dataform').find_model_dependents()
+command! -nargs=0 DataformShowDependencyTree lua require('dataform').show_dependency_tree()

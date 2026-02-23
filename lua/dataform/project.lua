@@ -412,6 +412,58 @@ function dataform.format()
   end
 end
 
+function dataform.show_dependency_tree()
+  local all_models = get_all_models()
+  local target_file_path = get_dataform_definitions_file_path()
+  local target_model = find_model_by_file_path(all_models, target_file_path)
+
+  if not target_model then
+    utils.notify("Model not found in compiled project.", vim.log.levels.WARN)
+    return
+  end
+
+  local tree_lines = {}
+  table.insert(tree_lines, "Dependency Tree for: " .. target_model.target.schema .. "." .. target_model.target.name)
+  table.insert(tree_lines, string.rep("=", #tree_lines[1]))
+  table.insert(tree_lines, "")
+
+  local seen = {}
+  local function build_tree(model, indent, is_last)
+    local prefix = indent .. (is_last and "└── " or "├── ")
+    local node_name = model.target.schema .. "." .. model.target.name
+    table.insert(tree_lines, prefix .. node_name .. " (" .. (model.type or "table") .. ")")
+
+    if seen[node_name] then
+      tree_lines[#tree_lines] = tree_lines[#tree_lines] .. " (recursive)"
+      return
+    end
+    seen[node_name] = true
+
+    local deps = model.dependencyTargets or {}
+    for i, dep_target in ipairs(deps) do
+      local dep_model = nil
+      for _, m in pairs(all_models) do
+        if m.target.schema == dep_target.schema and m.target.name == dep_target.name then
+          dep_model = m
+          break
+        end
+      end
+
+      if dep_model then
+        local new_indent = indent .. (is_last and "    " or "│   ")
+        build_tree(dep_model, new_indent, i == #deps)
+      else
+        local dep_prefix = indent .. (is_last and "    " or "│   ") .. (i == #deps and "└── " or "├── ")
+        table.insert(tree_lines, dep_prefix .. dep_target.schema .. "." .. dep_target.name .. " (unresolved)")
+      end
+    end
+  end
+
+  build_tree(target_model, "", true)
+
+  utils.open_buffer_with_content(table.concat(tree_lines, "\n"), "text", "Dataform Dependencies")
+end
+
 function dataform.compile()
   local command = "dataform compile"
   local status, content = utils.os_execute_with_status(command .. " --json", true)
