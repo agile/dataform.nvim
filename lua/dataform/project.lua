@@ -221,6 +221,108 @@ function dataform.go_to_ref()
   end
 end
 
+function dataform.hover()
+  local cursor_pos = vim.api.nvim_win_get_cursor(0)
+  local row, col = cursor_pos[1], cursor_pos[2]
+  local lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
+  local current_line = lines[row]
+
+  -- Extraction logic for word under cursor (including dots)
+  local line = current_line
+  local col_start = col
+  while col_start > 0 and line:sub(col_start, col_start):match("[%w_%.]") do
+    col_start = col_start - 1
+  end
+  local col_end = col + 1
+  while col_end <= #line and line:sub(col_end, col_end):match("[%w_%.]") do
+    col_end = col_end + 1
+  end
+  local word = line:sub(col_start + 1, col_end - 1)
+  if word == "" then return end
+
+  local hover_content = {}
+
+  -- 1. Check for ref/resolve hover (Table/Declaration metadata)
+  local _, _, table_name = current_line:find('ref%(%s*["\']([^"\']+)["\']%s*%)')
+  if not table_name then
+    _, _, _, table_name = current_line:find('ref%(%s*["\']([^"\']+)["\']%s*,%s*["\']([^"\']+)["\']%s*%)')
+  end
+  if not table_name then
+    _, _, table_name = current_line:find('resolve%(%s*["\']([^"\']+)["\']%s*%)')
+  end
+
+  if table_name and word:find(table_name, 1, true) then
+    local all_models = get_all_models()
+    for _, node in pairs(all_models) do
+      if node.target.name == table_name then
+        table.insert(hover_content, "# " .. node.target.database .. "." .. node.target.schema .. "." .. node.target.name)
+        table.insert(hover_content, "---")
+        table.insert(hover_content, "**Type:** " .. (node.type or "table"))
+        table.insert(hover_content, "**File:** " .. node.fileName)
+        if node.actionDescriptor and node.actionDescriptor.description then
+           table.insert(hover_content, "")
+           table.insert(hover_content, node.actionDescriptor.description)
+        end
+        break
+      end
+    end
+  end
+
+  -- 2. Check for Column hover (Search all columns in compiled graph)
+  if #hover_content == 0 then
+    local all_models = get_all_models()
+    local found_columns = {}
+    for _, node in pairs(all_models) do
+      if node.actionDescriptor and node.actionDescriptor.columns then
+        for _, col_meta in ipairs(node.actionDescriptor.columns) do
+          local col_name = col_meta.path[#col_meta.path]
+          if col_name == word then
+            table.insert(found_columns, {
+              table = node.target.schema .. "." .. node.target.name,
+              description = col_meta.description or "No description provided."
+            })
+          end
+        end
+      end
+    end
+
+    if #found_columns > 0 then
+      table.insert(hover_content, "# Column: " .. word)
+      table.insert(hover_content, "---")
+      for _, col in ipairs(found_columns) do
+        table.insert(hover_content, "**Table:** " .. col.table)
+        table.insert(hover_content, col.description)
+        table.insert(hover_content, "")
+      end
+    end
+  end
+
+  -- 3. Config block hovers
+  if #hover_content == 0 then
+    if word == "nonNull" then
+      table.insert(hover_content, "# assertion: nonNull")
+      table.insert(hover_content, "---")
+      table.insert(hover_content, "This condition asserts that the specified columns are not null across all table rows.")
+    elseif word == "uniqueKey" then
+      table.insert(hover_content, "# assertion: uniqueKey")
+      table.insert(hover_content, "---")
+      table.insert(hover_content, "This condition asserts that, in a specified column, no table rows have the same value.")
+    elseif word == "rowConditions" then
+      table.insert(hover_content, "# assertion: rowConditions")
+      table.insert(hover_content, "---")
+      table.insert(hover_content, "This condition asserts that all table rows follow the custom logic you define.")
+    end
+  end
+
+  if #hover_content > 0 then
+    vim.lsp.util.open_floating_preview(hover_content, "markdown", {
+      border = "rounded",
+      focusable = true,
+      focus_id = "dataform_hover",
+    })
+  end
+end
+
 function dataform.compile()
   local command = "dataform compile"
   local status, content = utils.os_execute_with_status(command .. " --json", true)
@@ -256,7 +358,13 @@ function dataform.get_compiled_sql_job(incremental)
 
       local _, result = utils.os_execute_with_status(bq_command)
 
-      utils.notify(result, vim.log.levels.WARN)
+      local stats = utils.parse_dry_run_stats(result)
+      if stats then
+        utils.notify(stats, vim.log.levels.INFO)
+      else
+        utils.notify(result, vim.log.levels.WARN)
+      end
+
       return utils.open_buffer_with_content(composite_query)
     end
   end

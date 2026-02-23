@@ -72,4 +72,26 @@ function utils.notify(msg, level)
   notify_fn(msg, level)
 end
 
+function utils.format_bytes(bytes)
+  if not bytes or bytes == 0 then return "0 B" end
+  local units = {"B", "KiB", "MiB", "GiB", "TiB", "PiB"}
+  local k = 1024
+  local i = math.floor(math.log(bytes) / math.log(k))
+  return string.format("%.2f %s", bytes / (k^i), units[i+1])
+end
+
+function utils.parse_dry_run_stats(bq_output)
+  -- bq query --dry_run usually outputs something like:
+  -- "Query successfully validated. Assuming the transaction succeeds, this query will process 12345 bytes."
+  local bytes = bq_output:match("process%s+(%d+)%s+bytes")
+  if bytes then
+    bytes = tonumber(bytes)
+    local formatted = utils.format_bytes(bytes)
+    -- Estimate cost: $5 per TiB (1024^4 bytes)
+    local cost = (bytes / (1024^4)) * 5
+    return string.format("Dry run: %s (~$%.5f)", formatted, cost)
+  end
+  return nil
+end
+
 return utils

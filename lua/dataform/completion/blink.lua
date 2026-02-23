@@ -11,7 +11,7 @@ function source.new(opts)
 end
 
 function source:enabled()
-  return vim.bo.filetype == 'sqlx' and utils.is_sqlx_js_string_syntax()
+  return vim.bo.filetype == 'sqlx'
 end
 
 function source:get_trigger_characters()
@@ -20,10 +20,16 @@ function source:get_trigger_characters()
 
 function source:get_completions(ctx, callback)
   --- @type lsp.CompletionItem[]
-  local action_names = utils.action_names()
+  local items = {}
+
+  if utils.is_sqlx_js_string_syntax() then
+    items = utils.action_names()
+  else
+    items = utils.columns()
+  end
 
   callback({
-    items = action_names,
+    items = items,
     is_incomplete_backward = false,
     is_incomplete_forward = false,
   })

@@ -3,13 +3,19 @@ local utils = require('dataform.completion.utils')
 local source = {}
 
 function source:is_available()
-  return vim.bo.filetype == 'sqlx' and utils.is_sqlx_js_string_syntax()
+  return vim.bo.filetype == 'sqlx'
 end
 
 function source:complete(params, callback)
-  local action_names = utils.action_names()
+  local items = {}
 
-  callback(action_names)
+  if utils.is_sqlx_js_string_syntax() then
+    items = utils.action_names()
+  else
+    items = utils.columns()
+  end
+
+  callback(items)
 end
 
 function source:get_trigger_characters()
