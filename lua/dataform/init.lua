@@ -13,6 +13,7 @@ M.go_to_ref = dataform.go_to_ref
 M.run_action_job = dataform.run_action_job
 M.run_all = dataform.run_all
 M.run_tag = dataform.run_tag
+M.estimate_tag_cost = dataform.estimate_tag_cost
 M.run_assertions_job = dataform.run_assertions_job
 M.find_model_dependencies = dataform.find_model_dependencies
 M.find_model_dependents = dataform.find_model_dependents

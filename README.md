@@ -106,6 +106,7 @@ blink.setup({
 |`:DataformClearDiagnostics` | Clear all Dataform compilation diagnostics. |
 |`:DataformRunAction` | Run the current model in BigQuery. |
 |`:DataformRunTag <tag>` | Run actions associated with a specific tag. |
+|`:DataformEstimateTagCost <tag>` | Estimate the BigQuery cost of running all actions for a specific tag. |
 |`:DataformRunAll` | Run the entire Dataform project. |
 |`:DataformFindDependencies`| Open a finder with all dependencies for the current model. |
 |`:DataformFindDependents`| Open a finder with all dependents for the current model. |

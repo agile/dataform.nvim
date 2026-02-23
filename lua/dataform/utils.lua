@@ -8,7 +8,7 @@ function utils.open_file(file_path)
   vim.cmd("edit " .. file_path)
 end
 
-function utils.os_execute_with_status(command, json_output)
+function utils.os_execute_with_status(command, json_output, quiet)
   local is_json = json_output or false
   local handle_stdout = is_json and " 2>/dev/null" or " 2>&1"
   local n = os.tmpname()
@@ -17,6 +17,10 @@ function utils.os_execute_with_status(command, json_output)
   local content = f:read("*all")
   f:close()
   os.remove(n)
+
+  if status ~= 0 and not quiet then
+    utils.notify("Command failed: " .. command .. "\n" .. content, vim.log.levels.ERROR)
+  end
 
   return status, content
 end

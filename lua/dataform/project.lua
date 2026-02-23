@@ -464,6 +464,75 @@ function dataform.show_dependency_tree()
   utils.open_buffer_with_content(table.concat(tree_lines, "\n"), "text", "Dataform Dependencies")
 end
 
+function dataform.estimate_tag_cost(tag)
+  if not tag or tag == "" then
+    utils.notify("Please provide a tag name.", vim.log.levels.WARN)
+    return
+  end
+
+  local all_models = get_all_models()
+  local filtered = {}
+  for _, model in pairs(all_models) do
+    if model.tags then
+      for _, t in ipairs(model.tags) do
+        if t == tag then
+          table.insert(filtered, model)
+          break
+        end
+      end
+    end
+  end
+
+  if #filtered == 0 then
+    utils.notify("No models found with tag: " .. tag, vim.log.levels.WARN)
+    return
+  end
+
+  utils.notify("Estimating cost for tag: " .. tag .. " (" .. #filtered .. " models)... This may take a while.", vim.log.levels.INFO)
+
+  local total_bytes = 0
+  local errors = {}
+
+  for _, model in ipairs(filtered) do
+    local query = ""
+    local target_name = model.target.database .. "." .. model.target.schema .. "." .. model.target.name
+
+    if model.type == "view" then
+      query = "CREATE OR REPLACE VIEW `" .. target_name .. "` AS " .. model.query
+    elseif model.type == "table" then
+      query = "CREATE OR REPLACE TABLE `" .. target_name .. "` AS " .. model.query
+    elseif model.type == "incremental" then
+      query = "CREATE OR REPLACE TABLE `" .. target_name .. "` AS " .. (model.incrementalQuery or model.query)
+    elseif model.query then
+      query = model.query
+    elseif model.queries then
+      query = table.concat(model.queries, ";\n")
+    end
+
+    if query ~= "" then
+      local bq_command = "echo " .. vim.fn.shellescape(query) .. " | bq query --dry_run"
+      local status, result = utils.os_execute_with_status(bq_command, false, true)
+
+      if status == 0 then
+        local bytes = result:match("process%s+(%d+)%s+bytes")
+        if bytes then
+          total_bytes = total_bytes + tonumber(bytes)
+        end
+      else
+        table.insert(errors, target_name)
+      end
+    end
+  end
+
+  local stats = utils.parse_dry_run_stats("process " .. total_bytes .. " bytes")
+  local msg = "Tag '" .. tag .. "' Cost Estimation:\n" .. stats
+  if #errors > 0 then
+    msg = msg .. "\nErrors encountered in " .. #errors .. " models: " .. table.concat(errors, ", ")
+  end
+
+  utils.notify(msg, vim.log.levels.INFO)
+end
+
 function dataform.compile()
   local command = "dataform compile"
   local status, content = utils.os_execute_with_status(command .. " --json", true)
