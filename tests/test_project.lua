@@ -174,6 +174,18 @@ T['actions']['hover() handles various symbols'] = function()
   df.hover()
   MiniTest.expect.equality(captured_lines[1]:find("Tag: daily") ~= nil, true)
 
+  -- 6. Multi-line tag hover
+  captured_lines = {}
+  setup_buffer({
+    'config {',
+    '  tags: [',
+    '    "hourly"',
+    '  ]',
+    '}'
+  }, { 3, 6 }) -- On "hourly"
+  df.hover()
+  MiniTest.expect.equality(captured_lines[1]:find("Tag: hourly") ~= nil, true)
+
   os.remove('includes/docs.js')
   os.remove('includes')
 

@@ -391,6 +391,29 @@ function dataform.get_context_at_cursor()
     context.type = "js_module"
   end
 
+  -- 5. Check if we are inside a tags block (could be multi-line)
+  local blocks = dataform.get_sqlx_blocks()
+  if blocks.config.exists and row >= blocks.config.start_line and row <= blocks.config.end_line then
+    -- We are in config block. Search backwards for 'tags:'
+    local is_tag = false
+    for r = row, blocks.config.start_line, -1 do
+      local l = lines[r]
+      if l:find("tags%s*:") then
+        is_tag = true
+        break
+      end
+      -- If we hit another key before 'tags:', then we are likely not in a tags list
+      -- but this is a simple heuristic.
+      if r < row and l:find("[%w_]+%s*:") then break end
+    end
+
+    if is_tag and (current_line:find('["\']' .. lua_escaped_word .. '["\']') or current_line:find(lua_escaped_word)) then
+      context.type = "tag"
+      context.tag_name = word
+      return context
+    end
+  end
+
   utils.log({
     event = "get_context_at_cursor",
     word = context.word,
@@ -617,14 +640,10 @@ function dataform.hover()
   end
 
   -- 6. Tag hover
-  if #hover_content == 0 then
-    -- Check if word is inside tags: [ "tag" ]
-    local lua_escaped_word = word:gsub("([%(%)%.%%%+%-%*%?%[%]%^%$])", "%%%1")
-    if context.current_line:find('tags%s*:%s*%[[^%]]*["\']' .. lua_escaped_word .. '["\']') then
-      table.insert(hover_content, "# Tag: " .. word)
-      table.insert(hover_content, "---")
-      table.insert(hover_content, "This is a Dataform tag. Use `:DataformCodeAction` to view the dependency tree for all models with this tag.")
-    end
+  if #hover_content == 0 and context.type == "tag" then
+    table.insert(hover_content, "# Tag: " .. context.tag_name)
+    table.insert(hover_content, "---")
+    table.insert(hover_content, "This is a Dataform tag. Use `:DataformCodeAction` to view the dependency tree for all models with this tag.")
   end
 
   if #hover_content > 0 then
@@ -1352,11 +1371,10 @@ function dataform.code_action()
   end
 
   -- Check if on a tag
-  local lua_escaped_word = context.word:gsub("([%(%)%.%%%+%-%*%?%[%]%^%$])", "%%%1")
-  if context.current_line:find('tags%s*:%s*%[[^%]]*["\']' .. lua_escaped_word .. '["\']') then
+  if context.type == "tag" then
     table.insert(actions, {
-      title = "Show dependency tree for tag '" .. context.word .. "'",
-      handler = function() dataform.show_tag_dependency_tree(context.word) end
+      title = "Show dependency tree for tag '" .. context.tag_name .. "'",
+      handler = function() dataform.show_tag_dependency_tree(context.tag_name) end
     })
   end
 
