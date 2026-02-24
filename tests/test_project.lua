@@ -192,4 +192,31 @@ T['actions']['hover() handles various symbols'] = function()
   vim.lsp.util.open_floating_preview = old_preview
 end
 
+T['actions']['get_rename_edits logic'] = function()
+  local df = _G.reload_dataform()
+  local utils = require('dataform.utils')
+
+  -- Mock grep output
+  local old_exec = utils.os_execute_with_status
+  utils.os_execute_with_status = function()
+    return 0, "definitions/test.sqlx:1:SELECT * FROM ${ref('old_name')}"
+  end
+
+  local edit = df.get_rename_edits("old_name", "new_name")
+
+  local found_edit = false
+  for uri, changes in pairs(edit.changes) do
+    if uri:find("test.sqlx") then
+      for _, change in ipairs(changes) do
+        if change.newText == "new_name" then found_edit = true end
+      end
+    end
+  end
+
+  MiniTest.expect.equality(found_edit, true)
+
+  -- Cleanup
+  utils.os_execute_with_status = old_exec
+end
+
 return T

@@ -283,6 +283,7 @@ function dataform.get_lsp_config(user_lsp_opts)
               hoverProvider = true,
               definitionProvider = true,
               referencesProvider = true,
+              renameProvider = true,
               documentSymbolProvider = true,
               documentFormattingProvider = true,
               codeActionProvider = true,
@@ -471,6 +472,15 @@ function dataform.get_lsp_config(user_lsp_opts)
             })
           end
           callback(nil, symbols)
+        elseif method == "textDocument/rename" then
+          local context = dataform.get_context_at_cursor()
+          if context.word == "" or context.type ~= "table" then
+            callback(nil, nil)
+            return true, 1
+          end
+
+          local workspace_edit = dataform.get_rename_edits(context.table_name, params.newName)
+          callback(nil, workspace_edit)
         elseif method == "textDocument/formatting" then
           local bufnr = vim.uri_to_bufnr(params.textDocument.uri)
           local blocks = dataform.get_sqlx_blocks()
@@ -2015,6 +2025,67 @@ function dataform.code_action()
       choice.handler()
     end
   end)
+end
+
+function dataform.get_rename_edits(old_name, new_name)
+  local search_patterns = {
+    "ref%s*%(%s*([\"'][^\"']+[\"']%s*,%s*)?[\"']" .. old_name:gsub("%.", "%.") .. "[\"']%s*%)",
+    "resolve%s*%(%s*([\"'][^\"']+[\"']%s*,%s*)?[\"']" .. old_name:gsub("%.", "%.") .. "[\"']%s*%)",
+    "dependencies%s*:%s*%[[^%]]*[\"']" .. old_name:gsub("%.", "%.") .. "[\"'][^%]]*%]",
+    'name%s*:%s*["\']' .. old_name:gsub("%.", "%.") .. '["\']'
+  }
+
+  local combined_pattern = table.concat(search_patterns, "|")
+  local cmd = string.format("grep -rnE %s . --include='*.sqlx' --include='*.js' --include='*.ts' --include='workflow_settings.yaml' --include='*.yaml' --include='*.json' 2>/dev/null",
+    vim.fn.shellescape(combined_pattern))
+
+  local _, output = utils.os_execute_with_status(cmd, false, true)
+  local changes = {}
+  local documentChanges = {}
+
+  for line in output:gmatch("[^\r\n]+") do
+    local file, lnum, text = line:match("([^:]+):(%d+):(.*)")
+    if file and lnum then
+      local abs_path = vim.fn.fnamemodify(file, ":p")
+      local uri = "file://" .. abs_path
+
+      -- Find start and end column of the old_name in the line text
+      -- This is a bit tricky with regex, we'll do a simple match for now
+      local s, e = text:find('["\']' .. old_name .. '["\']')
+      if s then
+        -- Adjust to only replace the inner part
+        s = s + 1
+        e = e - 1
+
+        changes[uri] = changes[uri] or {}
+        table.insert(changes[uri], {
+          range = {
+            start = { line = tonumber(lnum) - 1, character = s - 1 },
+            ["end"] = { line = tonumber(lnum) - 1, character = e }
+          },
+          newText = new_name
+        })
+      end
+    end
+  end
+
+  -- Also check if we should rename the file itself
+  local all_models = get_all_models()
+  for _, model in pairs(all_models) do
+    if model.target.name == old_name and model.fileName:find(old_name, 1, true) then
+      local new_fileName = model.fileName:gsub(old_name, new_name)
+      table.insert(documentChanges, {
+        kind = "rename",
+        oldUri = "file://" .. vim.fn.fnamemodify(model.fileName, ":p"),
+        newUri = "file://" .. vim.fn.fnamemodify(new_fileName, ":p")
+      })
+    end
+  end
+
+  return {
+    changes = changes,
+    documentChanges = #documentChanges > 0 and documentChanges or nil
+  }
 end
 
 function dataform.find_variable_references()
