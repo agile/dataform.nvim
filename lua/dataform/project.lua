@@ -878,6 +878,12 @@ function dataform.compile_on_save()
   end
 end
 
+function dataform.toggle_compile_on_save()
+  dataform.config.compile_on_save = not dataform.config.compile_on_save
+  local status = dataform.config.compile_on_save and "enabled" or "disabled"
+  utils.notify("Dataform compile on save " .. status .. ".", vim.log.levels.INFO)
+end
+
 function dataform.find_variable_references()
   local cursor_pos = vim.api.nvim_win_get_cursor(0)
   local row, col = cursor_pos[1], -- row is 1-indexed

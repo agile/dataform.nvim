@@ -31,6 +31,7 @@ EOF
 
 autocmd BufWritePost *.sqlx execute "lua require('dataform').compile_on_save()"
 
+command! -nargs=0 DataformToggleCompileOnSave lua require('dataform').toggle_compile_on_save()
 command! -nargs=0 DataformCompileFull lua require('dataform').get_compiled_sql_job()
 command! -nargs=0 DataformClearDiagnostics lua require('dataform').clear_diagnostics()
 command! -nargs=0 DataformCompileIncremental lua require('dataform').get_compiled_sql_job(true)
