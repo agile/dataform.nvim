@@ -8,11 +8,17 @@ end
 
 function source:complete(params, callback)
   local items = {}
+  local line = params.context.cursor_line
+  local col = params.context.cursor.col
+
+  -- Extract word before cursor (including dots)
+  local text_before = line:sub(1, col)
+  local word = text_before:match("([%w_%.]+)$") or ""
 
   if utils.is_sqlx_js_string_syntax() then
     items = utils.action_names()
   elseif utils.is_sqlx_js_syntax() then
-    items = utils.js_symbols()
+    items = utils.js_symbols(word)
   else
     items = utils.columns()
   end

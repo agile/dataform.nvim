@@ -33,29 +33,57 @@ T['completion']['js_symbols() finds includes symbols'] = function()
 
   -- Setup temporary includes file
   vim.fn.mkdir('includes', 'p')
+    local f = io.open('includes/test_mod.js', 'w')
+    f:write([[const MOD_CONST = 1;
+  function modFunc() {}]])
+    f:close()
+
+      local symbols = utils.js_symbols("")
+
+      -- Cleanup
+      os.remove('includes/test_mod.js')
+      os.remove('includes')
+
+      local found_mod = false
+      for _, s in ipairs(symbols) do
+        if s.label == 'test_mod' then found_mod = true end
+      end
+
+      MiniTest.expect.equality(found_mod, true)
+    end
+
+
+T['completion']['js_symbols() handles dot-notation for modules'] = function()
+  local utils = require('dataform.completion.utils')
+
+  vim.fn.mkdir('includes', 'p')
   local f = io.open('includes/test_mod.js', 'w')
   f:write([[const MOD_CONST = 1;
 function modFunc() {}]])
   f:close()
 
-  local symbols = utils.js_symbols()
-
-  -- Cleanup
-  os.remove('includes/test_mod.js')
-  os.remove('includes')
-
+  -- Test without dot (shows module itself)
+  local symbols1 = utils.js_symbols("")
   local found_mod = false
+  for _, s in ipairs(symbols1) do
+    if s.label == 'test_mod' then found_mod = true end
+  end
+  MiniTest.expect.equality(found_mod, true)
+
+  -- Test with dot (shows members)
+  local symbols2 = utils.js_symbols("test_mod.")
   local found_const = false
   local found_func = false
-  for _, s in ipairs(symbols) do
-    if s.label == 'test_mod' then found_mod = true end
-    if s.label == 'test_mod.MOD_CONST' then found_const = true end
-    if s.label == 'test_mod.modFunc' then found_func = true end
+  for _, s in ipairs(symbols2) do
+    if s.label == 'MOD_CONST' then found_const = true end
+    if s.label == 'modFunc' then found_func = true end
   end
 
-  MiniTest.expect.equality(found_mod, true)
   MiniTest.expect.equality(found_const, true)
   MiniTest.expect.equality(found_func, true)
+
+  os.remove('includes/test_mod.js')
+  os.remove('includes')
 end
 
 return T

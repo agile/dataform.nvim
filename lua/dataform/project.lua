@@ -282,9 +282,14 @@ function dataform.get_lsp_config(user_lsp_opts)
               textDocumentSync = 1,
               hoverProvider = true,
               definitionProvider = true,
+              referencesProvider = true,
               documentSymbolProvider = true,
               documentFormattingProvider = true,
               codeActionProvider = true,
+              completionProvider = {
+                triggerCharacters = { ".", "'", '"' },
+                resolveProvider = false,
+              },
               executeCommandProvider = {
                 commands = {
                   "dataform.create_declaration",
@@ -303,6 +308,22 @@ function dataform.get_lsp_config(user_lsp_opts)
         elseif method == "textDocument/codeAction" then
           local actions = dataform.get_code_actions()
           callback(nil, actions)
+        elseif method == "textDocument/completion" then
+          local comp_utils = require('dataform.completion.utils')
+          local line = vim.api.nvim_get_current_line()
+          local col = params.position.character
+          local text_before = line:sub(1, col)
+          local word = text_before:match("([%w_%.]+)$") or ""
+
+          local items = {}
+          if comp_utils.is_sqlx_js_string_syntax() then
+            items = comp_utils.action_names()
+          elseif comp_utils.is_sqlx_js_syntax() then
+            items = comp_utils.js_symbols(word)
+          else
+            items = comp_utils.columns()
+          end
+          callback(nil, items)
         elseif method == "textDocument/hover" then
           local context = dataform.get_context_at_cursor()
           local all_models = get_all_models()
@@ -376,6 +397,55 @@ function dataform.get_lsp_config(user_lsp_opts)
             end
           end
           callback(nil, nil)
+        elseif method == "textDocument/references" then
+          local context = dataform.get_context_at_cursor()
+          if context.word == "" then callback(nil, nil) return true, 1 end
+
+          local search_patterns = {}
+          local escaped_word = context.word:gsub("%.", "\\.")
+
+          if context.type == "variable" then
+            local escaped_var = context.var_name:gsub("%.", "\\.")
+            table.insert(search_patterns, "dataform\\.projectConfig\\.vars\\." .. escaped_var)
+            table.insert(search_patterns, "^" .. escaped_var .. ":")
+          elseif context.type == "table" then
+            local escaped_table = context.table_name:gsub("%.", "\\.")
+            table.insert(search_patterns, "ref%s*%(%s*([\"'][^\"']+[\"']%s*,%s*)?[\"']" .. escaped_table .. "[\"']%s*%)")
+            table.insert(search_patterns, "resolve%s*%(%s*([\"'][^\"']+[\"']%s*,%s*)?[\"']" .. escaped_table .. "[\"']%s*%)")
+            table.insert(search_patterns, "dependencies%s*:%s*%[[^%]]*[\"']" .. escaped_table .. "[\"'][^%]]*%]")
+            table.insert(search_patterns, 'name%s*:%s*["\']' .. escaped_table .. '["\']')
+            if context.schema then
+               local escaped_schema = context.schema:gsub("%.", "\\.")
+               table.insert(search_patterns, "ref%s*%(%s*[\"']" .. escaped_schema .. "[\"']%s*,%s*[\"']" .. escaped_table .. "[\"']%s*%)")
+            end
+          elseif context.type == "function" or context.type == "js_module" then
+            table.insert(search_patterns, escaped_word .. "%s*%(")
+            table.insert(search_patterns, "function%s+" .. escaped_word)
+            table.insert(search_patterns, escaped_word .. "%s*[:=]%s*function")
+            table.insert(search_patterns, "module%.exports%s*=%s*{[^}]*" .. escaped_word)
+          else
+            table.insert(search_patterns, escaped_word)
+          end
+
+          local combined_pattern = table.concat(search_patterns, "|")
+          local cmd = string.format("grep -rnE %s . --include='*.sqlx' --include='*.js' --include='workflow_settings.yaml' --include='*.yaml' --include='*.json' 2>/dev/null",
+            vim.fn.shellescape(combined_pattern))
+
+          local _, output = utils.os_execute_with_status(cmd, false, true)
+          local locations = {}
+          for line in output:gmatch("[^\r\n]+") do
+            local file, lnum, text = line:match("([^:]+):(%d+):(.*)")
+            if file and lnum then
+              table.insert(locations, {
+                uri = "file://" .. vim.fn.fnamemodify(file, ":p"),
+                range = {
+                  start = { line = tonumber(lnum) - 1, character = 0 },
+                  ["end"] = { line = tonumber(lnum) - 1, character = 100 }
+                }
+              })
+            end
+          end
+          callback(nil, locations)
         elseif method == "textDocument/documentSymbol" then
           local blocks = dataform.get_sqlx_blocks()
           local symbols = {}
