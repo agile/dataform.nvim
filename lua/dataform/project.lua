@@ -75,12 +75,8 @@ end
 
 local function get_dataform_definitions_file_path()
   local file = utils.get_current_file_path()
-  local pattern = ".*/definitions/"
-  local is_match = string.match(file, pattern)
-  local dataform_path = string.gsub(file, pattern, "")
-
-  if is_match then
-    return "definitions/" .. dataform_path
+  if file:find("/definitions/") then
+    return file
   end
   return utils.notify(
     "Error: File does not exist inside dataform definitions folder.",
@@ -100,9 +96,15 @@ local function get_all_models()
 end
 
 local function find_model_by_file_path(all_models, target_file_path)
+  if not target_file_path then return nil end
+  local target_abs = vim.fn.fnamemodify(target_file_path, ":p")
+
   for _, model in pairs(all_models) do
-    if model.fileName == target_file_path then
-      return model
+    if model.fileName then
+      local model_abs = vim.fn.fnamemodify(model.fileName, ":p")
+      if model_abs == target_abs then
+        return model
+      end
     end
   end
   return nil
@@ -232,21 +234,6 @@ function dataform.set_dataform_workdir_project_path()
   end
 end
 
-local function get_dataform_definitions_file_path()
-  local file = utils.get_current_file_path()
-  local pattern = ".*/definitions/"
-  local is_match = string.match(file, pattern)
-  local dataform_path = string.gsub(file, pattern, "")
-
-  if is_match then
-    return "definitions/" .. dataform_path
-  end
-  return utils.notify(
-    "Error: File does not exist inside dataform definitions folder.",
-    vim.log.levels.ERROR
-  )
-end
-
 function dataform.get_context_at_cursor()
   local cursor_pos = vim.api.nvim_win_get_cursor(0)
   local row, col = cursor_pos[1], cursor_pos[2]
@@ -322,6 +309,7 @@ function dataform.get_context_at_cursor()
     -- Improved Extraction logic for table/schema
     local function resolve_val(val)
       if not val then return nil end
+      val = vim.trim(val)
       -- If it's a project variable, try to resolve it
       local var_match = val:match("dataform%.projectConfig%.vars%.([%w_]+)")
       if var_match then
@@ -493,6 +481,7 @@ function dataform.hover()
 
   if context.type == "table" then
     local all_models = get_all_models()
+    local found = false
     for _, node in pairs(all_models) do
       if node.target.name == context.table_name and (not context.schema or node.target.schema == context.schema) then
         table.insert(hover_content, "# " .. node.target.database .. "." .. node.target.schema .. "." .. node.target.name)
@@ -503,8 +492,25 @@ function dataform.hover()
            table.insert(hover_content, "")
            table.insert(hover_content, node.actionDescriptor.description)
         end
+        found = true
         break
       end
+    end
+
+    if not found and #all_models > 0 then
+       -- Fallback: try matching by name only if schema provided but no exact match
+       if context.schema then
+         for _, node in pairs(all_models) do
+           if node.target.name == context.table_name then
+             table.insert(hover_content, "# " .. node.target.database .. "." .. node.target.schema .. "." .. node.target.name)
+             table.insert(hover_content, "---")
+             table.insert(hover_content, "**Type:** " .. (node.type or "table"))
+             table.insert(hover_content, "**File:** " .. node.fileName .. " (Schema mismatch: expected " .. context.schema .. ")")
+             found = true
+             break
+           end
+         end
+       end
     end
   end
 
@@ -968,42 +974,41 @@ function dataform.compile()
 end
 
 function dataform.get_compiled_sql_job(incremental)
-  local tables = dataform.compiled_project_table.tables
+  local all_models = get_all_models()
+  local target_file_path = get_dataform_definitions_file_path()
+  local table = find_model_by_file_path(all_models, target_file_path)
 
-  for _, table in pairs(tables) do
-    if table.fileName == get_dataform_definitions_file_path() then
-      local preOpsKey = incremental and "incrementalPreOps" or "preOps"
-      local postOpsKey = incremental and "incrementalPostOps" or "postOps"
-      local queryKey = incremental and "incrementalQuery" or "query"
+  if table then
+    local preOpsKey = incremental and "incrementalPreOps" or "preOps"
+    local postOpsKey = incremental and "incrementalPostOps" or "postOps"
+    local queryKey = incremental and "incrementalQuery" or "query"
 
-      local preOps = type(table[preOpsKey]) == "table" and table[preOpsKey][1] or ""
-      local postOps = type(table[postOpsKey]) == "table" and table[postOpsKey][1] or ""
+    local preOps = type(table[preOpsKey]) == "table" and table[preOpsKey][1] or ""
+    local postOps = type(table[postOpsKey]) == "table" and table[postOpsKey][1] or ""
 
-      local preOpsClean = preOps:gsub("%s+$", "")
-      if preOpsClean:sub(-1) ~= ";" and preOps ~= "" then preOps = preOps .. ";" end
+    local preOpsClean = preOps:gsub("%s+$", "")
+    if preOpsClean:sub(-1) ~= ";" and preOps ~= "" then preOps = preOps .. ";" end
 
-      local composite_query = preOps .. table[queryKey] .. ";\n" .. postOps
-            local bq_command = "echo " .. vim.fn.shellescape(composite_query) .. " | bq query --dry_run"
+    local composite_query = preOps .. table[queryKey] .. ";\n" .. postOps
+    local bq_command = "echo " .. vim.fn.shellescape(composite_query) .. " | bq query --dry_run"
 
-            local _, result = utils.os_execute_with_status(bq_command)
+    local _, result = utils.os_execute_with_status(bq_command)
 
-            local stats = utils.parse_dry_run_stats(result)
-            local header = ""
-            if stats then
-              header = "-- " .. stats .. "\n\n"
-              utils.notify(stats, vim.log.levels.INFO)
-            else
-              header = "-- Dry run failed or stats unavailable\n-- " .. result:gsub("\n", "\n-- ") .. "\n\n"
-              utils.notify(result, vim.log.levels.WARN)
-            end
+    local stats = utils.parse_dry_run_stats(result)
+    local header = ""
+    if stats then
+      header = "-- " .. stats .. "\n\n"
+      utils.notify(stats, vim.log.levels.INFO)
+    else
+      header = "-- Dry run failed or stats unavailable\n-- " .. result:gsub("\n", "\n-- ") .. "\n\n"
+      utils.notify(result, vim.log.levels.WARN)
+    end
 
-            local final_content = header .. composite_query
-            if dataform.config.preview_style == "float" then
-              return utils.open_floating_window(final_content, "sql", "Dataform Preview")
-            else
-              return utils.open_buffer_with_content(final_content, "sql", "Dataform Preview")
-            end
-
+    local final_content = header .. composite_query
+    if dataform.config.preview_style == "float" then
+      return utils.open_floating_window(final_content, "sql", "Dataform Preview")
+    else
+      return utils.open_buffer_with_content(final_content, "sql", "Dataform Preview")
     end
   end
 end
@@ -1042,37 +1047,38 @@ end
 
 function dataform.run_action_job(full_refresh)
   local full_refresh = full_refresh or false
-  local df_tables = dataform.compiled_project_table.tables or {}
-  local df_operations = dataform.compiled_project_table.operations or {}
-  local tables = vim.fn.extend(df_tables, df_operations)
+  local all_models = get_all_models()
+  local target_file_path = get_dataform_definitions_file_path()
+  local table = find_model_by_file_path(all_models, target_file_path)
 
-  for _, table in pairs(tables) do
-    if table.fileName == get_dataform_definitions_file_path() then
-      local action = table.target.database .. "." .. table.target.schema .. "." .. table.target.name
-      local command = "dataform run --full-refresh=" .. tostring(full_refresh) .. " --actions=" .. action
+  if table then
+    local action = table.target.database .. "." .. table.target.schema .. "." .. table.target.name
+    local command = "dataform run --full-refresh=" .. tostring(full_refresh) .. " --actions=" .. action
 
-      local status, content = utils.os_execute_with_status(command)
+    local status, content = utils.os_execute_with_status(command)
 
-      if status == 0 then
-        return utils.notify(
-          "Dataform run executed successfully.",
-          vim.log.levels.INFO
-        )
-      end
+    if status == 0 then
       return utils.notify(
-        "Error: Dataform run failed. \n\n" .. content,
-        vim.log.levels.ERROR
+        "Dataform run executed successfully.",
+        vim.log.levels.INFO
       )
     end
+    return utils.notify(
+      "Error: Dataform run failed. \n\n" .. content,
+      vim.log.levels.ERROR
+    )
   end
 end
 
 function dataform.run_assertions_job()
-  local assertions = dataform.compiled_project_table.assertions
+  local assertions = dataform.compiled_project_table.assertions or {}
   local target_assertions = {}
+  local target_file_path = get_dataform_definitions_file_path()
+  if not target_file_path then return end
+  local target_abs = vim.fn.fnamemodify(target_file_path, ":p")
 
   for _, assertion in pairs(assertions) do
-    if assertion.fileName == get_dataform_definitions_file_path() then
+    if assertion.fileName and vim.fn.fnamemodify(assertion.fileName, ":p") == target_abs then
       local action = assertion.target.database .. "." .. assertion.target.schema .. "." .. assertion.target.name
       table.insert(target_assertions, action)
     end

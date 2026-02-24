@@ -17,7 +17,7 @@ T['dry_run']['show_dry_run_virtual_text() sets extmark'] = function()
   df.compiled_project_table = {
     tables = {
       {
-        fileName = "definitions/test.sqlx",
+        fileName = "/project/definitions/test.sqlx",
         target = { database = "db", schema = "s", name = "test" },
         query = "SELECT 1",
         type = "view"

@@ -10,12 +10,12 @@ T['graph']['find_model_dependencies logic'] = function()
   df.compiled_project_table = {
     tables = {
       {
-        fileName = "definitions/b.sqlx",
+        fileName = "/path/to/project/definitions/b.sqlx",
         target = { schema = "s", name = "b" },
         dependencyTargets = { { schema = "s", name = "a" } }
       },
       {
-        fileName = "definitions/a.sqlx",
+        fileName = "/path/to/project/definitions/a.sqlx",
         target = { schema = "s", name = "a" }
       }
     }
@@ -38,7 +38,7 @@ T['graph']['find_model_dependencies logic'] = function()
   df.find_model_dependencies()
 
   MiniTest.expect.equality(#captured_results, 1)
-  MiniTest.expect.equality(captured_results[1], "definitions/a.sqlx")
+  MiniTest.expect.equality(captured_results[1], "/path/to/project/definitions/a.sqlx")
 
   -- Cleanup
   vim.fn.expand = old_expand
@@ -53,12 +53,12 @@ T['graph']['find_model_dependents logic'] = function()
   df.compiled_project_table = {
     tables = {
       {
-        fileName = "definitions/b.sqlx",
+        fileName = "/path/to/project/definitions/b.sqlx",
         target = { schema = "s", name = "b" },
         dependencyTargets = { { schema = "s", name = "a" } }
       },
       {
-        fileName = "definitions/a.sqlx",
+        fileName = "/path/to/project/definitions/a.sqlx",
         target = { schema = "s", name = "a" }
       }
     }
@@ -81,7 +81,7 @@ T['graph']['find_model_dependents logic'] = function()
   df.find_model_dependents()
 
   MiniTest.expect.equality(#captured_results, 1)
-  MiniTest.expect.equality(captured_results[1], "definitions/b.sqlx")
+  MiniTest.expect.equality(captured_results[1], "/path/to/project/definitions/b.sqlx")
 
   -- Cleanup
   vim.fn.expand = old_expand
