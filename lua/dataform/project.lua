@@ -185,7 +185,7 @@ local function get_dataform_definitions_file_path()
   )
 end
 
-local function get_context_at_cursor()
+function dataform.get_context_at_cursor()
   local cursor_pos = vim.api.nvim_win_get_cursor(0)
   local row, col = cursor_pos[1], cursor_pos[2]
   local lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
@@ -264,7 +264,7 @@ local function get_context_at_cursor()
 end
 
 function dataform.go_to_ref()
-  local context = get_context_at_cursor()
+  local context = dataform.get_context_at_cursor()
   local word = context.word
   local lines = context.lines
   local row = context.row
@@ -363,7 +363,7 @@ function dataform.go_to_ref()
 end
 
 function dataform.hover()
-  local context = get_context_at_cursor()
+  local context = dataform.get_context_at_cursor()
   local word = context.word
   if word == "" then return end
 

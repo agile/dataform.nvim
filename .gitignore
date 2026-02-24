@@ -31,6 +31,9 @@ luac.out
 *.so.*
 *.dylib
 
+# Test dependencies
+tests/.deps/
+
 # Executables
 *.exe
 *.out
