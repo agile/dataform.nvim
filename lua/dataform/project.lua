@@ -772,8 +772,11 @@ function dataform.show_dependency_tree()
   end
 
   local tree_lines = {}
+  local line_to_file = {}
   table.insert(tree_lines, "Dependency Tree for: " .. target_model.target.schema .. "." .. target_model.target.name)
   table.insert(tree_lines, string.rep("=", #tree_lines[1]))
+  table.insert(tree_lines, "")
+  table.insert(tree_lines, "Tip: Press <CR> on a node to jump to file, 'q' to close.")
   table.insert(tree_lines, "")
 
   local seen = {}
@@ -781,6 +784,7 @@ function dataform.show_dependency_tree()
     local prefix = indent .. (is_last and "└── " or "├── ")
     local node_name = model.target.schema .. "." .. model.target.name
     table.insert(tree_lines, prefix .. node_name .. " (" .. (model.type or "table") .. ")")
+    line_to_file[#tree_lines] = model.fileName
 
     if seen[node_name] then
       tree_lines[#tree_lines] = tree_lines[#tree_lines] .. " (recursive)"
@@ -810,7 +814,18 @@ function dataform.show_dependency_tree()
 
   build_tree(target_model, "", true)
 
-  utils.open_buffer_with_content(table.concat(tree_lines, "\n"), "text", "Dataform Dependencies")
+  local keymaps = {
+    ['<CR>'] = function()
+      local line = vim.api.nvim_win_get_cursor(0)[1]
+      local file = line_to_file[line]
+      if file then
+        vim.cmd("close")
+        utils.open_file(file)
+      end
+    end
+  }
+
+  utils.open_interactive_buffer(table.concat(tree_lines, "\n"), "dataform_tree", "Dataform Dependencies", keymaps)
 end
 
 function dataform.estimate_tag_cost(tag)

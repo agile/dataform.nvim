@@ -74,6 +74,18 @@ function utils.open_floating_window(content, filetype, title)
   return win, bufnr
 end
 
+function utils.open_interactive_buffer(content, filetype, title, keymaps)
+  local win, bufnr = utils.open_floating_window(content, filetype, title)
+
+  if keymaps then
+    for key, action in pairs(keymaps) do
+      vim.keymap.set('n', key, action, { buffer = bufnr, noremap = true, silent = true })
+    end
+  end
+
+  return win, bufnr
+end
+
 function utils.custom_picker(prompt_name, custom_file_paths)
   if not custom_file_paths or #custom_file_paths == 0 then return end
 
