@@ -90,53 +90,59 @@ function M.js_symbols(context_word)
   -- 1. List files in includes/
   local includes_path = "includes"
   if vim.fn.isdirectory(includes_path) == 1 then
-    local files = vim.fn.globpath(includes_path, "*.js", false, true)
+    local files = vim.fn.globpath(includes_path, "*", false, true)
     for _, file in ipairs(files) do
-      local module_name = vim.fn.fnamemodify(file, ":t:r")
+      if file:sub(-3) == ".js" or file:sub(-3) == ".ts" then
+        local module_name = vim.fn.fnamemodify(file, ":t:r")
 
-      -- If no prefix, show the module name itself
-      if prefix == "" then
-        if not added[module_name] then
-          table.insert(symbols, {
-            label = module_name,
-            kind = 9, -- Module
-            detail = "Module in includes/"
-          })
-          added[module_name] = true
-        end
-      elseif prefix == module_name then
-        -- We are completing inside this module
-        local f = io.open(file, "r")
-        if f then
-          local content = f:read("*all")
-          f:close()
+        -- If no prefix, show the module name itself
+        if prefix == "" then
+          if not added[module_name] then
+            table.insert(symbols, {
+              label = module_name,
+              kind = 9, -- Module
+              detail = "Module in includes/"
+            })
+            added[module_name] = true
+          end
+        elseif prefix == module_name then
+          -- We are completing inside this module
+          local f = io.open(file, "r")
+          if f then
+            local content = f:read("*all")
+            f:close()
 
-          -- Find top-level definitions and exports
-          for name in content:gmatch("function%s+([%w_]+)%s*%(") do
-            if not added[name] then
-              table.insert(symbols, {
-                label = name,
-                kind = 3, -- Function
-                detail = "Function in " .. module_name
-              })
-              added[name] = true
+            -- Find top-level definitions and exports (including TS 'export' keyword)
+            for name in content:gmatch("function%s+([%w_]+)%s*%(") do
+              if not added[name] then
+                table.insert(symbols, { label = name, kind = 3, detail = "Function in " .. module_name })
+                added[name] = true
+              end
             end
-          end
-          for name in content:gmatch("const%s+([%w_]+)%s*=") do
-            if not added[name] then
-              table.insert(symbols, {
-                label = name,
-                kind = 6, -- Constant
-                detail = "Constant in " .. module_name
-              })
-              added[name] = true
+            for name in content:gmatch("export%s+function%s+([%w_]+)%s*%(") do
+              if not added[name] then
+                table.insert(symbols, { label = name, kind = 3, detail = "Exported function" })
+                added[name] = true
+              end
             end
-          end
-          -- Also check for object property exports: name: function... or name: "..."
-          for name in content:gmatch("([%w_]+)%s*:%s*function") do
-            if not added[name] then
-              table.insert(symbols, { label = name, kind = 3, detail = "Exported function" })
-              added[name] = true
+            for name in content:gmatch("const%s+([%w_]+)%s*=") do
+              if not added[name] then
+                table.insert(symbols, { label = name, kind = 6, detail = "Constant in " .. module_name })
+                added[name] = true
+              end
+            end
+            for name in content:gmatch("export%s+const%s+([%w_]+)%s*=") do
+              if not added[name] then
+                table.insert(symbols, { label = name, kind = 6, detail = "Exported constant" })
+                added[name] = true
+              end
+            end
+            -- Also check for object property exports: name: function... or name: "..."
+            for name in content:gmatch("([%w_]+)%s*:%s*function") do
+              if not added[name] then
+                table.insert(symbols, { label = name, kind = 3, detail = "Exported function" })
+                added[name] = true
+              end
             end
           end
         end

@@ -50,52 +50,56 @@ function signatures.get_signature_for_name(name)
     end
   end
 
-  -- 2. Search in includes/ directory
-  local parts = vim.split(name, "%.")
-  if #parts > 1 then
-    local module_name = parts[1]
-    -- The target could be nested (e.g., docs.columns.my_col)
-    -- We'll try to find the last part as the definition name
-    local target_name = parts[#parts]
-    local include_path = "includes/" .. module_name .. ".js"
+    -- 2. Search in includes/ directory
+    local parts = vim.split(name, "%.")
+    if #parts > 1 then
+      local module_name = parts[1]
+      -- The target could be nested (e.g., docs.columns.my_col)
+      -- We'll try to find the last part as the definition name
+      local target_name = parts[#parts]
+      local js_path = "includes/" .. module_name .. ".js"
+      local ts_path = "includes/" .. module_name .. ".ts"
+      local include_path = vim.fn.filereadable(ts_path) == 1 and ts_path or js_path
 
-    if vim.fn.filereadable(include_path) == 1 then
-      local f = io.open(include_path, "r")
-      if f then
-        local content = f:read("*all")
-        f:close()
+      if vim.fn.filereadable(include_path) == 1 then
+        local f = io.open(include_path, "r")
+        if f then
+          local content = f:read("*all")
+          f:close()
 
-        -- Adjust patterns for the target name
-        local sub_patterns = {
-          "function%s+" .. target_name .. "%s*%((.-)%)",
-          "const%s+" .. target_name .. "%s*=%s*%((.-)%)%s*=>",
-          "const%s+" .. target_name .. "%s*=%s*function%s*%((.-)%)",
-          target_name .. "%s*:%s*function%s*%((.-)%)",
-          target_name .. "%s*[:=]%s*['\"](.-)['\"]", -- Match simple string constants
-          "const%s+" .. target_name .. "%s*=%s*['\"](.-)['\"]",
-          target_name .. "%s*[:=]%s*(%b{})", -- Match object definitions
-        }
+          -- Adjust patterns for the target name (supporting TS 'export' keyword)
+          local sub_patterns = {
+            "function%s+" .. target_name .. "%s*%((.-)%)",
+            "export%s+function%s+" .. target_name .. "%s*%((.-)%)",
+            "const%s+" .. target_name .. "%s*=%s*%((.-)%)%s*=>",
+            "export%s+const%s+" .. target_name .. "%s*=%s*%((.-)%)%s*=>",
+            "const%s+" .. target_name .. "%s*=%s*function%s*%((.-)%)",
+            target_name .. "%s*:%s*function%s*%((.-)%)",
+            target_name .. "%s*[:=]%s*['\"](.-)['\"]", -- Match simple string constants
+            "const%s+" .. target_name .. "%s*=%s*['\"](.-)['\"]",
+            "export%s+const%s+" .. target_name .. "%s*=%s*['\"](.-)['\"]",
+            target_name .. "%s*[:=]%s*(%b{})", -- Match object definitions
+          }
 
-        for _, pattern in ipairs(sub_patterns) do
-          local params = content:match(pattern)
-          if params then
-            local res = { label = name, params = {}, doc = "Imported from " .. include_path }
-            if pattern:find("function") or pattern:find("=>") then
-               res.params = vim.split(params, "%s*,%s*")
-            else
-               -- For constants, show the value as doc if it's short, or just note it
-               if #params < 100 then
-                 res.doc = res.doc .. "\n\n**Value:** " .. params
-               end
+          for _, pattern in ipairs(sub_patterns) do
+            local params = content:match(pattern)
+            if params then
+              local res = { label = name, params = {}, doc = "Imported from " .. include_path }
+              if pattern:find("function") or pattern:find("=>") then
+                 res.params = vim.split(params, "%s*,%s*")
+              else
+                 -- For constants, show the value as doc if it's short, or just note it
+                 if #params < 100 then
+                   res.doc = res.doc .. "\n\n**Value:** " .. params
+                 end
+              end
+              return res
             end
-            return res
           end
         end
       end
     end
-  end
-
-  return nil
+    return nil
 end
 
 function signatures.get_signature_at_cursor()

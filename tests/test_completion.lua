@@ -86,4 +86,29 @@ function modFunc() {}]])
   os.remove('includes')
 end
 
+T['completion']['js_symbols() handles TypeScript files'] = function()
+  local utils = require('dataform.completion.utils')
+
+  vim.fn.mkdir('includes', 'p')
+  local f = io.open('includes/ts_mod.ts', 'w')
+  f:write([[export const TS_CONST = 1;
+export function tsFunc(a, b) {}]])
+  f:close()
+
+  local symbols = utils.js_symbols("ts_mod.")
+
+  local found_const = false
+  local found_func = false
+  for _, s in ipairs(symbols) do
+    if s.label == 'TS_CONST' then found_const = true end
+    if s.label == 'tsFunc' then found_func = true end
+  end
+
+  MiniTest.expect.equality(found_const, true)
+  MiniTest.expect.equality(found_func, true)
+
+  os.remove('includes/ts_mod.ts')
+  os.remove('includes')
+end
+
 return T

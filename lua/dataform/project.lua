@@ -428,7 +428,7 @@ function dataform.get_lsp_config(user_lsp_opts)
           end
 
           local combined_pattern = table.concat(search_patterns, "|")
-          local cmd = string.format("grep -rnE %s . --include='*.sqlx' --include='*.js' --include='workflow_settings.yaml' --include='*.yaml' --include='*.json' 2>/dev/null",
+          local cmd = string.format("grep -rnE %s . --include='*.sqlx' --include='*.js' --include='*.ts' --include='workflow_settings.yaml' --include='*.yaml' --include='*.json' 2>/dev/null",
             vim.fn.shellescape(combined_pattern))
 
           local _, output = utils.os_execute_with_status(cmd, false, true)
@@ -825,14 +825,19 @@ function dataform.go_to_ref()
     local var_name = parts[2]
 
     -- Check in includes/
-    local includes_file = "includes/" .. js_module .. ".js"
+    local js_path = "includes/" .. js_module .. ".js"
+    local ts_path = "includes/" .. js_module .. ".ts"
+    local includes_file = vim.fn.filereadable(ts_path) == 1 and ts_path or js_path
+
     if vim.fn.filereadable(includes_file) == 1 then
       utils.open_file(includes_file)
       local file_lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
       local patterns = {
         "const%s+" .. var_name .. "%s*=",
+        "export%s+const%s+" .. var_name .. "%s*=",
         "let%s+" .. var_name .. "%s*=",
         "function%s+" .. var_name .. "%s*%(",
+        "export%s+function%s+" .. var_name .. "%s*%(",
         var_name .. "%s*[:=]%s*function"
       }
       for i, line in ipairs(file_lines) do
@@ -2064,7 +2069,7 @@ function dataform.find_variable_references()
 
   -- Use grep to find all occurrences
   local combined_pattern = table.concat(search_patterns, "|")
-  local cmd = string.format("grep -rnE %s . --include='*.sqlx' --include='*.js' --include='workflow_settings.yaml' --include='*.yaml' --include='*.json' 2>/dev/null",
+  local cmd = string.format("grep -rnE %s . --include='*.sqlx' --include='*.js' --include='*.ts' --include='workflow_settings.yaml' --include='*.yaml' --include='*.json' 2>/dev/null",
     vim.fn.shellescape(combined_pattern))
 
   local _, output = utils.os_execute_with_status(cmd, false, true)
