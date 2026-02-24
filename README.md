@@ -106,6 +106,42 @@ If you are on Neovim 0.11 or later, you can treat Dataform exactly like any othe
 }
 ```
 
+## 🏰 UI Integrations
+
+The plugin provides public Lua functions that can be used to add Dataform information to your Statusline or Winbar.
+
+### Lualine Example
+```lua
+require('lualine').setup({
+  sections = {
+    lualine_x = {
+      {
+        function() return require('dataform').status() end,
+        color = { fg = '#ffffff' },
+      }
+    }
+  }
+})
+```
+
+### Winbar Example (Standard)
+```lua
+vim.opt.winbar = "%{%v:lua.require('dataform').target_path()%}"
+```
+
+### Available UI Helpers
+| Function | Description | Example Output |
+|---|---|---|
+|`require('dataform').status()` | Icon + Dry-run stats or error status. | `󱓞 1.23 MiB` |
+|`require('dataform').target_path()` | The resolved BigQuery target path. | `reporting_dev.user_stats` |
+|`require('dataform').target_schema()` | The resolved BigQuery schema name. | `reporting_dev` |
+|`require('dataform').target_table()` | The resolved BigQuery table name. | `user_stats` |
+|`require('dataform').canonical_path()` | The logical (original) Dataform target path. | `reporting.user_stats` |
+|`require('dataform').canonical_schema()` | The logical (original) Dataform schema name. | `reporting` |
+|`require('dataform').canonical_table()` | The logical (original) Dataform table name. | `user_stats` |
+|`require('dataform').is_canonical()` | Returns true if resolved target == canonical target. | `false` |
+|`require('dataform').project_summary()` | Total models and sources in the project. | `DF: 78 models / 54 sources` |
+
 ## 🚀 Development & Testing
 
 This plugin uses `mini.test` for its test suite. To run the tests locally:

@@ -137,7 +137,7 @@ local function get_dataform_definitions_file_path()
   )
 end
 
-local function get_all_models()
+function dataform.get_all_models()
   local tables = vim.deepcopy(dataform.compiled_project_table.tables or {})
   local operations = dataform.compiled_project_table.operations or {}
   local declarations = dataform.compiled_project_table.declarations or {}
@@ -148,13 +148,13 @@ local function get_all_models()
   return vim.fn.extend(all_models, assertions)
 end
 
-local function find_model_by_file_path(all_models, target_file_path)
+function dataform.find_model_by_file_path(all_models, target_file_path)
   if not target_file_path then return nil end
-    local target_abs = vim.fn.fnamemodify(target_file_path, ":p")
-    utils.log("find_model_by_file_path: target_abs=" .. target_abs)
+  local target_abs = vim.fn.fnamemodify(target_file_path, ":p")
+  utils.log("find_model_by_file_path: target_abs=" .. target_abs)
 
-    for _, model in pairs(all_models) do
-      if model.fileName then
+  for _, model in pairs(all_models) do
+    if model.fileName then
       local model_abs = vim.fn.fnamemodify(model.fileName, ":p")
       if model_abs == target_abs then
         utils.log("find_model_by_file_path: MATCH FOUND for " .. model.target.name)
@@ -165,6 +165,7 @@ local function find_model_by_file_path(all_models, target_file_path)
   utils.log("find_model_by_file_path: NO MATCH FOUND")
   return nil
 end
+
 local function find_file_name_by_schema_name(all_models, schema, name)
   for _, model in pairs(all_models) do
     if model.target.schema == schema and model.target.name == name then
@@ -327,7 +328,7 @@ function dataform.get_lsp_config(user_lsp_opts)
           callback(nil, items)
         elseif method == "textDocument/hover" then
           local context = dataform.get_context_at_cursor()
-          local all_models = get_all_models()
+          local all_models = dataform.get_all_models()
           local hover_content = {}
 
           if context.type == "table" then
@@ -381,7 +382,7 @@ function dataform.get_lsp_config(user_lsp_opts)
           end
         elseif method == "textDocument/definition" then
           local context = dataform.get_context_at_cursor()
-          local all_models = get_all_models()
+          local all_models = dataform.get_all_models()
 
           if context.type == "table" then
             for _, node in pairs(all_models) do
@@ -893,7 +894,7 @@ function dataform.hover()
   local hover_content = {}
 
   if context.type == "table" then
-    local all_models = get_all_models()
+    local all_models = dataform.get_all_models()
     local found = false
     for _, node in pairs(all_models) do
       if node.target.name == context.table_name and (not context.schema or node.target.schema == context.schema) then
@@ -937,7 +938,7 @@ function dataform.hover()
 
   -- Column hover
   if #hover_content == 0 then
-    local all_models = get_all_models()
+    local all_models = dataform.get_all_models()
     local found_columns = {}
     for _, node in pairs(all_models) do
       if node.actionDescriptor and node.actionDescriptor.columns then
@@ -1198,14 +1199,14 @@ end
 
 function dataform.show_dependency_tree(models)
   utils.log("show_dependency_tree: triggered")
-  local all_models = get_all_models()
+  local all_models = dataform.get_all_models()
   local target_models = {}
 
   if models then
     target_models = models
   else
     local target_file_path = get_dataform_definitions_file_path()
-    local target_model = find_model_by_file_path(all_models, target_file_path)
+    local target_model = dataform.find_model_by_file_path(all_models, target_file_path)
     if target_model then
       table.insert(target_models, target_model)
     end
@@ -1281,7 +1282,7 @@ end
 
 function dataform.show_tag_dependency_tree(tag)
   if not tag or tag == "" then return end
-  local all_models = get_all_models()
+  local all_models = dataform.get_all_models()
   local filtered = {}
   for _, model in pairs(all_models) do
     if model.tags then
@@ -1307,7 +1308,7 @@ function dataform.estimate_tag_cost(tag)
     return
   end
 
-  local all_models = get_all_models()
+  local all_models = dataform.get_all_models()
   local filtered = {}
   for _, model in pairs(all_models) do
     if model.tags then
@@ -1371,9 +1372,9 @@ function dataform.estimate_tag_cost(tag)
 end
 
 function dataform.show_dry_run_virtual_text()
-  local all_models = get_all_models()
+  local all_models = dataform.get_all_models()
   local target_file_path = get_dataform_definitions_file_path()
-  local model = find_model_by_file_path(all_models, target_file_path)
+  local model = dataform.find_model_by_file_path(all_models, target_file_path)
 
   if not model or not model.query then return end
 
@@ -1476,7 +1477,7 @@ function dataform.compile(on_success)
   })
 end
 function dataform.get_compiled_sql_job(incremental)
-  local all_models = get_all_models()
+  local all_models = dataform.get_all_models()
   local target_file_path = get_dataform_definitions_file_path()
   local table = find_model_by_file_path(all_models, target_file_path)
 
@@ -1551,9 +1552,9 @@ end
 
 function dataform.run_action_job(full_refresh)
   local full_refresh = full_refresh or false
-  local all_models = get_all_models()
+  local all_models = dataform.get_all_models()
   local target_file_path = get_dataform_definitions_file_path()
-  local table = find_model_by_file_path(all_models, target_file_path)
+  local table = dataform.find_model_by_file_path(all_models, target_file_path)
 
   if table then
     local action = table.target.database .. "." .. table.target.schema .. "." .. table.target.name
@@ -1616,9 +1617,9 @@ function dataform.run_assertions_job()
 end
 
 function dataform.find_model_dependents()
-  local all_models = get_all_models()
+  local all_models = dataform.get_all_models()
   local target_file_path = get_dataform_definitions_file_path()
-  local target_model = find_model_by_file_path(all_models, target_file_path)
+  local target_model = dataform.find_model_by_file_path(all_models, target_file_path)
   local target_paths = {}
 
   if not target_model then
@@ -1643,9 +1644,9 @@ function dataform.find_model_dependents()
 end
 
 function dataform.find_model_dependencies()
-  local all_models = get_all_models()
+  local all_models = dataform.get_all_models()
   local target_file_path = get_dataform_definitions_file_path()
-  local target_model = find_model_by_file_path(all_models, target_file_path)
+  local target_model = dataform.find_model_by_file_path(all_models, target_file_path)
   local target_paths = {}
 
   if not target_model then
@@ -1875,7 +1876,7 @@ end
 function dataform.get_code_actions()
   local context = dataform.get_context_at_cursor()
   local lsp_actions = {}
-  local all_models = get_all_models()
+  local all_models = dataform.get_all_models()
   local bufnr = vim.api.nvim_get_current_buf()
 
   -- 1. Check current diagnostics for fixable errors
@@ -1987,7 +1988,7 @@ function dataform.code_action()
 
   if context.type == "table" then
     -- Check if table exists in graph
-    local all_models = get_all_models()
+    local all_models = dataform.get_all_models()
     local found = false
     for _, node in pairs(all_models) do
       if node.target.name == context.table_name and (not context.schema or node.target.schema == context.schema) then
@@ -2070,7 +2071,7 @@ function dataform.get_rename_edits(old_name, new_name)
   end
 
   -- Also check if we should rename the file itself
-  local all_models = get_all_models()
+  local all_models = dataform.get_all_models()
   for _, model in pairs(all_models) do
     if model.target.name == old_name and model.fileName:find(old_name, 1, true) then
       local new_fileName = model.fileName:gsub(old_name, new_name)
