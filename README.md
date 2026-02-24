@@ -35,6 +35,7 @@
 
 - [Dataform CLI](https://cloud.google.com/dataform/docs/use-dataform-cli) (`npm i -g @dataform/cli`)
 - [BigQuery CLI Tool](https://cloud.google.com/bigquery/docs/bq-command-line-tool) (`gcloud components install bq`)
+- [plenary.nvim](https://github.com/nvim-lua/plenary.nvim) for background jobs and path management.
 - (Optional) [sqlfluff](https://sqlfluff.com/), or tool of your choice, for SQL formatting and linting.
 
 ### Optional Enhancements

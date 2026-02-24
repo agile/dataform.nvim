@@ -3,6 +3,9 @@ local utils = require("dataform.utils")
 local dataform = {}
 dataform.compiled_project_table = {}
 dataform.lsp_client_id = nil
+dataform.current_compile_job = nil
+dataform.current_dry_run_job = nil
+dataform.structural_hashes = {}
 
 ---@alias DataformUserConfig table
 ---@field compile_on_save boolean? (default: true) Automatically compile Dataform project on saving a .sqlx file.
@@ -74,6 +77,31 @@ local function get_blocks_via_treesitter()
   end
 
   return blocks
+end
+
+function dataform.get_structural_hash(bufnr)
+  local blocks = dataform.get_sqlx_blocks()
+  local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+  local structure = ""
+
+  if blocks.config.exists then
+    structure = structure .. table.concat(vim.list_slice(lines, blocks.config.start_line, blocks.config.end_line), "\n")
+  end
+  if blocks.js.exists then
+    structure = structure .. table.concat(vim.list_slice(lines, blocks.js.start_line, blocks.js.end_line), "\n")
+  end
+
+  -- Also include all ref/resolve calls in the whole file
+  -- (if a ref is added/removed, we must re-compile)
+  local content = table.concat(lines, "\n")
+  for ref_call in content:gmatch("${%s*ref%s*%(.-%)}?") do
+    structure = structure .. ref_call
+  end
+  for res_call in content:gmatch("${%s*resolve%s*%(.-%)}?") do
+    structure = structure .. res_call
+  end
+
+  return vim.fn.sha256(structure)
 end
 
 local function get_dataform_definitions_file_path()
@@ -1238,65 +1266,89 @@ function dataform.show_dry_run_virtual_text()
     query = model.query
   end
 
-  local bq_command = "echo " .. vim.fn.shellescape(query) .. " | bq query --dry_run"
-  -- Use background execution if possible, but for now we'll do it synchronously
-  local status, result = utils.os_execute_with_status(bq_command, false, true)
+  local bq_command = "bq"
+  local bq_args = { "query", "--dry_run", query }
 
-  if status == 0 then
-    local stats = utils.parse_dry_run_stats(result)
-    if stats then
-      local bufnr = vim.api.nvim_get_current_buf()
-      vim.api.nvim_buf_clear_namespace(bufnr, vt_ns, 0, -1)
-      vim.api.nvim_buf_set_extmark(bufnr, vt_ns, 0, 0, {
-        virt_text = { { "󱓞 " .. stats, "DiagnosticInfo" } },
-        virt_text_pos = "right_align",
-      })
-    end
+  -- Cancel existing dry run job
+  if dataform.current_dry_run_job then
+    dataform.current_dry_run_job:shutdown()
+    dataform.current_dry_run_job = nil
   end
+
+  dataform.current_dry_run_job = utils.execute_job(bq_command, bq_args, {
+    quiet = true,
+    callback = function(code, stdout, stderr)
+      dataform.current_dry_run_job = nil
+      -- bq query --dry_run sometimes prints to stderr even on success
+      local output = stdout .. stderr
+      if code == 0 or output:find("process") then
+        local stats = utils.parse_dry_run_stats(output)
+        if stats then
+          local bufnr = vim.api.nvim_get_current_buf()
+          vim.api.nvim_buf_clear_namespace(bufnr, vt_ns, 0, -1)
+          vim.api.nvim_buf_set_extmark(bufnr, vt_ns, 0, 0, {
+            virt_text = { { "󱓞 " .. stats, "DiagnosticInfo" } },
+            virt_text_pos = "right_align",
+          })
+        end
+      end
+    end
+  })
 end
 
-function dataform.compile()
-  local command = "dataform compile"
-  -- Use quiet=true to avoid the automatic notification from os_execute_with_status
-  local status, content = utils.os_execute_with_status(command .. " --json", true, true)
+function dataform.compile(on_success)
+  local bufnr = vim.api.nvim_get_current_buf()
+  local file_path = utils.get_current_file_path()
+  local new_hash = dataform.get_structural_hash(bufnr)
 
-  local ok, decoded = pcall(vim.fn.json_decode, content)
-  if ok then
-    dataform.compiled_project_table = decoded
-    dataform.set_diagnostics(decoded)
-
-    utils.log({
-      event = "compilation_summary",
-      tables = #(decoded.tables or {}),
-      declarations = #(decoded.declarations or {}),
-      operations = #(decoded.operations or {}),
-      assertions = #(decoded.assertions or {}),
-      graph_errors = #(decoded.graphErrors and decoded.graphErrors.compilationErrors or {})
-    })
-
-    if status == 0 then
-      utils.notify("Dataform compiled successfully.", vim.log.levels.INFO)
-    else
-      utils.notify("Dataform compiled with errors (see diagnostics).", vim.log.levels.WARN)
-    end
-  else
-    -- JSON decode failed, likely a hard compilation error
-    local _, content_error = utils.os_execute_with_status(command, false, true)
-
-    -- Truncate very long errors
-    local lines = vim.split(content_error, "\n")
-    local msg = content_error
-    if #lines > 15 then
-       msg = table.concat(vim.list_slice(lines, 1, 15), "\n") .. "\n... (truncated)"
-    end
-
-    utils.notify(
-      "Error: Dataform compile failed. \n\n" .. msg,
-      vim.log.levels.ERROR
-    )
+  -- If hash matches, skip compile but still trigger success callback
+  if dataform.structural_hashes[file_path] == new_hash then
+    utils.log("Skipping dataform compile: structure hasn't changed.")
+    if on_success then on_success() end
+    return
   end
-end
 
+  -- Cancel existing compile job
+  if dataform.current_compile_job then
+    dataform.current_compile_job:shutdown()
+    dataform.current_compile_job = nil
+  end
+
+  dataform.current_compile_job = utils.execute_job("dataform", { "compile", "--json" }, {
+    json = true,
+    quiet = true,
+    callback = function(code, stdout, stderr)
+      dataform.current_compile_job = nil
+
+      local ok, decoded = pcall(vim.fn.json_decode, stdout)
+      if ok then
+        dataform.compiled_project_table = decoded
+        dataform.set_diagnostics(decoded)
+        -- Store the hash only after a successful compilation
+        dataform.structural_hashes[file_path] = new_hash
+
+        utils.log({
+          event = "compilation_summary",
+          tables = #(decoded.tables or {}),
+          declarations = #(decoded.declarations or {}),
+          operations = #(decoded.operations or {}),
+          assertions = #(decoded.assertions or {}),
+          graph_errors = #(decoded.graphErrors and decoded.graphErrors.compilationErrors or {})
+        })
+
+        if code == 0 then
+          utils.notify("Dataform compiled successfully.", vim.log.levels.INFO)
+          if on_success then on_success() end
+        else
+          utils.notify("Dataform compiled with errors (see diagnostics).", vim.log.levels.WARN)
+        end
+      else
+        utils.log("Async compile failed to return valid JSON.")
+        -- Handle hard error notification here if needed
+      end
+    end
+  })
+end
 function dataform.get_compiled_sql_job(incremental)
   local all_models = get_all_models()
   local target_file_path = get_dataform_definitions_file_path()
@@ -1485,11 +1537,9 @@ end
 
 function dataform.compile_on_save()
   if dataform.config.compile_on_save then
-    dataform.compile()
-    -- Only run dry run if compilation was successful (we can check compiled_project_table)
-    if dataform.compiled_project_table and not (dataform.compiled_project_table.graphErrors and #dataform.compiled_project_table.graphErrors.compilationErrors > 0) then
+    dataform.compile(function()
        dataform.show_dry_run_virtual_text()
-    end
+    end)
   end
 end
 

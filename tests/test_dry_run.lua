@@ -32,10 +32,14 @@ T['dry_run']['show_dry_run_virtual_text() sets extmark'] = function()
     return old_expand(arg)
   end
 
-  -- Mock bq dry_run output
-  local old_exec = utils.os_execute_with_status
-  utils.os_execute_with_status = function()
-    return 0, "Query successfully validated. This query will process 1099511627776 bytes."
+  -- Mock bq dry_run output via execute_job
+  local old_job = utils.execute_job
+  utils.execute_job = function(cmd, args, opts)
+    -- Execute the callback immediately for the test
+    if opts.callback then
+      opts.callback(0, "Query successfully validated. This query will process 1099511627776 bytes.", "")
+    end
+    return { shutdown = function() end }
   end
 
   -- Mock extmark setting
@@ -53,7 +57,7 @@ T['dry_run']['show_dry_run_virtual_text() sets extmark'] = function()
 
   -- Cleanup
   vim.fn.expand = old_expand
-  utils.os_execute_with_status = old_exec
+  utils.execute_job = old_job
   vim.api.nvim_buf_set_extmark = old_extmark
 end
 

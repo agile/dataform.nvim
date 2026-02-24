@@ -14,6 +14,13 @@ if vim.fn.isdirectory(minipath) == 0 then
 end
 vim.opt.runtimepath:append(minipath)
 
+local plenarypath = deps_path .. '/plenary.nvim'
+if vim.fn.isdirectory(plenarypath) == 0 then
+  print('Downloading plenary.nvim...')
+  vim.fn.system({ 'git', 'clone', '--filter=blob:none', 'https://github.com/nvim-lua/plenary.nvim', plenarypath })
+end
+vim.opt.runtimepath:append(plenarypath)
+
 require('mini.test').setup({
   execute = {
     reporter = require('mini.test').gen_reporter.stdout(),

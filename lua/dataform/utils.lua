@@ -1,18 +1,62 @@
 local utils = {}
 
 function utils.get_current_file_path()
-  return vim.fn.expand('%:p')
+  local Path = require('plenary.path')
+  return Path:new(vim.fn.expand('%:p')):absolute()
 end
 
 function utils.open_file(file_path)
   vim.cmd("edit " .. file_path)
 end
 
+--- Execute a job using plenary
+---@param cmd string
+---@param args string[]
+---@param opts table? { json: boolean, quiet: boolean, callback: function }
+---@return any JobObj
+function utils.execute_job(cmd, args, opts)
+  local Job = require('plenary.job')
+  opts = opts or {}
+
+  utils.log("JOB EXEC: " .. cmd .. " " .. table.concat(args, " "))
+
+  local job = Job:new({
+    command = cmd,
+    args = args,
+    on_exit = function(j, return_val)
+      vim.schedule(function()
+        local stdout = table.concat(j:result(), "\n")
+        local stderr = table.concat(j:stderr_result(), "\n")
+
+        utils.log("JOB EXIT CODE: " .. tostring(return_val))
+
+        if return_val ~= 0 then
+          utils.log("JOB ERROR OUTPUT: " .. (stderr or "(empty)"))
+          if not opts.quiet then
+            utils.notify("Job failed: " .. cmd .. "\n" .. stderr, vim.log.levels.ERROR)
+          end
+        else
+          if not opts.json then
+            utils.log("JOB OUTPUT: " .. (stdout or "(empty)"))
+          end
+        end
+
+        if opts.callback then
+          opts.callback(return_val, stdout, stderr)
+        end
+      end)
+    end,
+  })
+
+  job:start()
+  return job
+end
+
 function utils.os_execute_with_status(command, json_output, quiet)
   local is_json = json_output or false
   local handle_stdout = is_json and " 2>/dev/null" or " 2>&1"
 
-  utils.log("EXEC: " .. command)
+  utils.log("EXEC (Sync): " .. command)
 
   local n = os.tmpname()
   local status = os.execute(command .. " > " .. n .. handle_stdout)
@@ -36,6 +80,38 @@ function utils.os_execute_with_status(command, json_output, quiet)
   return status, content
 end
 
+--- Asynchronous execution using vim.system
+---@param cmd string[] | string
+---@param opts table? { json: boolean, quiet: boolean, callback: function }
+---@return any SystemObj
+function utils.system_async(cmd, opts)
+  opts = opts or {}
+  local command_str = type(cmd) == "table" and table.concat(cmd, " ") or cmd
+  utils.log("EXEC (Async): " .. command_str)
+
+  return vim.system(type(cmd) == "string" and { "bash", "-c", cmd } or cmd, {
+    text = true,
+  }, function(obj)
+    vim.schedule(function()
+      utils.log("EXIT CODE (Async): " .. tostring(obj.code))
+
+      if obj.code ~= 0 then
+        utils.log("ERROR OUTPUT (Async): " .. (obj.stderr or "(empty)"))
+        if not opts.quiet then
+          utils.notify("Async command failed: " .. command_str .. "\n" .. (obj.stderr or ""), vim.log.levels.ERROR)
+        end
+      else
+        if not opts.json then
+          utils.log("OUTPUT (Async): " .. (obj.stdout or "(empty)"))
+        end
+      end
+
+      if opts.callback then
+        opts.callback(obj.code, obj.stdout, obj.stderr)
+      end
+    end)
+  end)
+end
 function utils.open_buffer_with_content(content, filetype, title)
   local bufnr = vim.api.nvim_create_buf(false, true)
   vim.api.nvim_buf_set_lines(bufnr, 0, -1, true, vim.split(content, "\n"))
