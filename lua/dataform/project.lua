@@ -510,6 +510,54 @@ end
 local ns = vim.api.nvim_create_namespace("dataform_diagnostics")
 local vt_ns = vim.api.nvim_create_namespace("dataform_virtual_text")
 
+function dataform.check_unresolved_references(bufnr)
+  local diagnostics = {}
+  local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+  local vars = dataform.compiled_project_table.projectConfig and dataform.compiled_project_table.projectConfig.vars or {}
+
+  for i, line in ipairs(lines) do
+    -- 1. Check project variables
+    for var_name in line:gmatch("dataform%.projectConfig%.vars%.([%w_]+)") do
+      if not vars[var_name] then
+        local col_start = line:find("dataform.projectConfig.vars." .. var_name, 1, true)
+        if col_start then
+          table.insert(diagnostics, {
+            lnum = i - 1,
+            col = col_start - 1,
+            end_col = col_start - 1 + #("dataform.projectConfig.vars." .. var_name),
+            severity = vim.diagnostic.severity.WARN,
+            message = "Unresolved project variable: " .. var_name,
+            source = "Dataform",
+          })
+        end
+      end
+    end
+
+    -- 2. Check JS module references in ${ ... } (e.g., ${utils.func})
+    -- Exclude 'dataform.' to avoid double-flagging project variables
+    for ref in line:gmatch("${%s*([%w_]+%.[%w_%.]+)") do
+       -- Skip if it's ref or resolve or starts with dataform.
+       if not ref:find("^ref%.") and not ref:find("^resolve%.") and not ref:find("^dataform%.") then
+         local sig = require("dataform.signatures").get_signature_for_name(ref)
+         if not sig then
+            local col_start = line:find(ref, 1, true)
+            if col_start then
+              table.insert(diagnostics, {
+                lnum = i - 1,
+                col = col_start - 1,
+                end_col = col_start - 1 + #ref,
+                severity = vim.diagnostic.severity.WARN,
+                message = "Unresolved JS reference: " .. ref,
+                source = "Dataform",
+              })
+            end
+         end
+       end
+    end
+  end
+  return diagnostics
+end
+
 function dataform.set_diagnostics(compiled_json)
   vim.diagnostic.reset(ns)
   if not compiled_json then return end
@@ -562,8 +610,25 @@ function dataform.set_diagnostics(compiled_json)
     end
 
     if bufnr ~= -1 and vim.api.nvim_buf_is_loaded(bufnr) then
+      -- If it's the current buffer, also add local unresolved references
+      if bufnr == vim.api.nvim_get_current_buf() then
+        local local_diagnostics = dataform.check_unresolved_references(bufnr)
+        for _, ld in ipairs(local_diagnostics) do
+          table.insert(diagnostics, ld)
+        end
+      end
       vim.diagnostic.set(ns, bufnr, diagnostics)
     end
+  end
+
+  -- If current buffer wasn't in diagnostics_by_file, check it specifically for local errors
+  local cur_buf = vim.api.nvim_get_current_buf()
+  local cur_file = vim.api.nvim_buf_get_name(cur_buf)
+  if not diagnostics_by_file[cur_file] then
+     local local_diagnostics = dataform.check_unresolved_references(cur_buf)
+     if #local_diagnostics > 0 then
+        vim.diagnostic.set(ns, cur_buf, local_diagnostics)
+     end
   end
 end
 
