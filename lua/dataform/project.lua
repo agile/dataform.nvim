@@ -215,38 +215,68 @@ function dataform.get_context_at_cursor()
 
   local lua_escaped_word = word:gsub("([%(%)%.%%%+%-%*%?%[%]%^%$])", "%%%1")
 
-  -- 1. Check for ref/resolve
-  -- Find the surrounding ${ ... } block if it exists
-  local start_col, end_col
-  local s = current_line:sub(1, col + 1):reverse():find("{$", 1, true)
-  if s then
-    start_col = col + 1 - s
-    local e = current_line:find("}", col + 1, true)
-    if e then
-      end_col = e
-      local block_content = current_line:sub(start_col + 1, end_col - 1)
+  -- 1. Check for ref/resolve (Support multi-line blocks)
+  local start_row, start_col, end_row, end_col
+  -- Find start of ${
+  for r = row, 1, -1 do
+    local l = lines[r]
+    local search_start = (r == row) and col or #l
+    local s = l:sub(1, search_start + 1):reverse():find("{$", 1, true)
+    if s then
+      start_row = r
+      start_col = #l:sub(1, search_start + 1) - s
+      break
+    end
+  end
 
-      -- Extract table/schema from ref/resolve
-      local _, _, schema, table_name = block_content:find('ref%(%s*["\']([^"\']+)["\']%s*,%s*["\']([^"\']+)["\']%s*%)')
-      if not table_name then
-        _, _, table_name = block_content:find('ref%(%s*["\']([^"\']+)["\']%s*%)')
-      end
-      if not table_name then
-        _, _, schema, table_name = block_content:find('resolve%(%s*["\']([^"\']+)["\']%s*,%s*["\']([^"\']+)["\']%s*%)')
-      end
-      if not table_name then
-        _, _, table_name = block_content:find('resolve%(%s*["\']([^"\']+)["\']%s*%)')
-      end
-
-      if table_name and (word == table_name or word == schema) then
-        context.type = "table"
-        context.table_name = table_name
-        context.schema = schema
-        return context
+  -- Find end of }
+  if start_row then
+    for r = row, #lines do
+      local l = lines[r]
+      local search_start = (r == row) and col or 0
+      local e = l:find("}", search_start + 1, true)
+      if e then
+        end_row = r
+        end_col = e
+        break
       end
     end
   end
 
+  if start_row and end_row then
+    local block_content = ""
+    for r = start_row, end_row do
+      local l = lines[r]
+      if r == start_row and r == end_row then
+        block_content = l:sub(start_col + 1, end_col)
+      elseif r == start_row then
+        block_content = l:sub(start_col + 1)
+      elseif r == end_row then
+        block_content = block_content .. "\n" .. l:sub(1, end_col)
+      else
+        block_content = block_content .. "\n" .. l
+      end
+    end
+
+    -- Extract table/schema from ref/resolve
+    local _, _, schema, table_name = block_content:find('ref%(%s*["\']([^"\']+)["\']%s*,%s*["\']([^"\']+)["\']%s*%)')
+    if not table_name then
+      _, _, table_name = block_content:find('ref%(%s*["\']([^"\']+)["\']%s*%)')
+    end
+    if not table_name then
+      _, _, schema, table_name = block_content:find('resolve%(%s*["\']([^"\']+)["\']%s*,%s*["\']([^"\']+)["\']%s*%)')
+    end
+    if not table_name then
+      _, _, table_name = block_content:find('resolve%(%s*["\']([^"\']+)["\']%s*%)')
+    end
+
+    if table_name and (word == table_name or word == schema) then
+      context.type = "table"
+      context.table_name = table_name
+      context.schema = schema
+      return context
+    end
+  end
   -- 2. Check for project variables
   if word:find("dataform%.projectConfig%.vars%.") or current_line:find("dataform%.projectConfig%.vars%." .. lua_escaped_word) then
     context.type = "variable"
@@ -968,24 +998,8 @@ function dataform.toggle_preview_style()
 end
 
 function dataform.find_variable_references()
-  local cursor_pos = vim.api.nvim_win_get_cursor(0)
-  local row, col = cursor_pos[1], -- row is 1-indexed
-    cursor_pos[2]
-  local lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
-  local current_line = lines[row] or ""
-
-  -- Improve word extraction to handle dots (e.g., constants.TAX_RATE)
-  local line = current_line
-  local col_start = col
-  while col_start > 0 and line:sub(col_start, col_start):match("[%w_%.]") do
-    col_start = col_start - 1
-  end
-  local col_end = col + 1
-  while col_end <= #line and line:sub(col_end, col_end):match("[%w_%.]") do
-    col_end = col_end + 1
-  end
-  local word = line:sub(col_start + 1, col_end - 1)
-  if word == "" then word = vim.fn.expand("<cword>") end
+  local context = dataform.get_context_at_cursor()
+  local word = context.word
 
   if word == "" then
     utils.notify("No symbol under cursor.", vim.log.levels.WARN)
@@ -994,68 +1008,39 @@ function dataform.find_variable_references()
 
   local search_patterns = {}
   local label = word
-  local is_var = false
-  local is_ref = false
-  local is_func = false
   local escaped_word = word:gsub("%.", "\\.")
-  local lua_escaped_word = word:gsub("([%(%)%.%%%+%-%*%?%[%]%^%$])", "%%%1")
 
-  -- 1. Check for project variables: dataform.projectConfig.vars.NAME
-  if word:find("dataform%.projectConfig%.vars%.") or current_line:find("dataform%.projectConfig%.vars%." .. lua_escaped_word) then
-    is_var = true
-    local var_name = word:match("([^%.]+)$")
-    local escaped_var = var_name:gsub("%.", "\\.")
+  if context.type == "variable" then
+    local escaped_var = context.var_name:gsub("%.", "\\.")
     table.insert(search_patterns, "dataform\\.projectConfig\\.vars\\." .. escaped_var)
-    -- Also search in workflow_settings.yaml definition (e.g., "my_var: value")
     table.insert(search_patterns, "^" .. escaped_var .. ":")
-    label = "variable: " .. var_name
-  end
+    label = "variable: " .. context.var_name
+  elseif context.type == "table" then
+    local escaped_table = context.table_name:gsub("%.", "\\.")
+    -- Search for ref("table"), ref("schema", "table"), resolve("table"), etc.
+    table.insert(search_patterns, "ref%s*%(%s*([\"'][^\"']+[\"']%s*,%s*)?[\"']" .. escaped_table .. "[\"']%s*%)")
+    table.insert(search_patterns, "resolve%s*%(%s*([\"'][^\"']+[\"']%s*,%s*)?[\"']" .. escaped_table .. "[\"']%s*%)")
+    -- Search in dependencies list: dependencies: [ "table" ]
+    table.insert(search_patterns, "dependencies%s*:%s*%[[^%]]*[\"']" .. escaped_table .. "[\"'][^%]]*%]")
+    -- Search for definition: name: "table"
+    table.insert(search_patterns, 'name%s*:%s*["\']' .. escaped_table .. '["\']')
 
-  -- 2. Check for ref/resolve (Table references)
-  if not is_var then
-    -- Check if it looks like a ref/resolve call in SQLX or JS, or a dependency/name
-    if current_line:find("ref%s*%(.-['\"]" .. lua_escaped_word .. "['\"].-%)") or
-       current_line:find("resolve%s*%(.-['\"]" .. lua_escaped_word .. "['\"].-%)") or
-       current_line:find('name%s*:%s*["\']' .. lua_escaped_word .. '["\']') or
-       current_line:find('dependencies%s*:%s*%[[^%]]*["\']' .. lua_escaped_word .. '["\']') then
-
-      is_ref = true
-      -- Search for ref("word"), ref("schema", "word"), resolve("word"), etc.
-      table.insert(search_patterns, "ref%s*%(%s*([\"'][^\"']+[\"']%s*,%s*)?[\"']" .. escaped_word .. "[\"']%s*%)")
-      table.insert(search_patterns, "resolve%s*%(%s*([\"'][^\"']+[\"']%s*,%s*)?[\"']" .. escaped_word .. "[\"']%s*%)")
-      -- Search in dependencies list: dependencies: [ "word" ]
-      table.insert(search_patterns, "dependencies%s*:%s*%[[^%]]*[\"']" .. escaped_word .. "[\"'][^%]]*%]")
-      -- Search for definition: name: "word"
-      table.insert(search_patterns, 'name%s*:%s*["\']' .. escaped_word .. '["\']')
-      label = "table reference: " .. word
+    if context.schema then
+       local escaped_schema = context.schema:gsub("%.", "\\.")
+       -- Add a pattern specifically matching this schema and table
+       table.insert(search_patterns, "ref%s*%(%s*[\"']" .. escaped_schema .. "[\"']%s*,%s*[\"']" .. escaped_table .. "[\"']%s*%)")
+       label = "table: " .. context.schema .. "." .. context.table_name
+    else
+       label = "table: " .. context.table_name
     end
-  end
-
-  -- 3. Check for JS functions
-  if not is_var and not is_ref then
-    -- If word is followed by '(', it might be a function call
-    if current_line:find(lua_escaped_word .. "%s*%(") then
-      is_func = true
-      table.insert(search_patterns, escaped_word .. "%s*%(")
-      table.insert(search_patterns, "function%s+" .. escaped_word)
-      table.insert(search_patterns, escaped_word .. "%s*[:=]%s*function")
-      table.insert(search_patterns, "module%.exports%s*=%s*{[^}]*" .. escaped_word)
-      label = "function: " .. word
-    end
-  end
-
-  -- 4. Special case for workflow_settings.yaml if we are in it
-  if not is_var and not is_ref and not is_func then
-    if utils.get_current_file_path():find("workflow_settings.yaml", 1, true) then
-      is_var = true
-      table.insert(search_patterns, "dataform\\.projectConfig\\.vars\\." .. escaped_word)
-      table.insert(search_patterns, "^" .. escaped_word .. ":")
-      label = "variable: " .. word
-    end
-  end
-
-  -- 5. Final fallback: search for the word itself if no specific patterns found
-  if #search_patterns == 0 then
+  elseif context.type == "function" then
+    table.insert(search_patterns, escaped_word .. "%s*%(")
+    table.insert(search_patterns, "function%s+" .. escaped_word)
+    table.insert(search_patterns, escaped_word .. "%s*[:=]%s*function")
+    table.insert(search_patterns, "module%.exports%s*=%s*{[^}]*" .. escaped_word)
+    label = "function: " .. word
+  else
+    -- Fallback
     table.insert(search_patterns, escaped_word)
     label = "symbol: " .. word
   end

@@ -35,6 +35,22 @@ T['get_context_at_cursor()']['identifies schema and table in ref()'] = function(
   MiniTest.expect.equality(context.table_name, 'my_table')
 end
 
+T['get_context_at_cursor()']['handles multi-line ref blocks'] = function()
+  setup_buffer({
+    'SELECT * FROM ${',
+    '  ref(',
+    '    "my_schema",',
+    '    "my_table"',
+    '  )',
+    '}'
+  }, { 4, 10 }) -- On "my_table"
+
+  local context = require('dataform.project').get_context_at_cursor()
+  MiniTest.expect.equality(context.type, 'table')
+  MiniTest.expect.equality(context.table_name, 'my_table')
+  MiniTest.expect.equality(context.schema, 'my_schema')
+end
+
 T['get_context_at_cursor()']['identifies js functions'] = function()
   setup_buffer({ 'const x = my_func(123)' }, { 1, 12 })
 
