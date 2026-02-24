@@ -258,21 +258,41 @@ function dataform.get_context_at_cursor()
       end
     end
 
-    -- Extract table/schema from ref/resolve
-    local _, _, schema, table_name = block_content:find('ref%(%s*["\']([^"\']+)["\']%s*,%s*["\']([^"\']+)["\']%s*%)')
-    if not table_name then
-      _, _, table_name = block_content:find('ref%(%s*["\']([^"\']+)["\']%s*%)')
+    -- Improved Extraction logic for table/schema
+    local function resolve_val(val)
+      if not val then return nil end
+      -- If it's a project variable, try to resolve it
+      local var_match = val:match("dataform%.projectConfig%.vars%.([%w_]+)")
+      if var_match then
+        local vars = dataform.compiled_project_table.projectConfig and dataform.compiled_project_table.projectConfig.vars or {}
+        return vars[var_match]
+      end
+      -- Strip quotes if it's a literal
+      return val:match('^["\'](.*)["\']$') or val
     end
-    if not table_name then
-      _, _, schema, table_name = block_content:find('resolve%(%s*["\']([^"\']+)["\']%s*,%s*["\']([^"\']+)["\']%s*%)')
+
+    local schema, table_name
+    -- Match 2-arg: ref(arg1, arg2)
+    local s_raw, t_raw = block_content:match('ref%(%s*([^,%s]+)%s*,%s*([^%s%)]+)%s*%)')
+    if not s_raw then
+      s_raw, t_raw = block_content:match('resolve%(%s*([^,%s]+)%s*,%s*([^%s%)]+)%s*%)')
     end
-    if not table_name then
-      _, _, table_name = block_content:find('resolve%(%s*["\']([^"\']+)["\']%s*%)')
+
+    if s_raw and t_raw then
+      schema = resolve_val(s_raw)
+      table_name = resolve_val(t_raw)
+    else
+      -- Match 1-arg: ref(arg1)
+      local raw = block_content:match('ref%(%s*([^%s%)]+)%s*%)')
+      if not raw then raw = block_content:match('resolve%(%s*([^%s%)]+)%s*%)') end
+      if raw then
+        table_name = resolve_val(raw)
+      end
     end
 
     if table_name then
       -- If cursor is on the word, or if we are inside the block, default to the table
-      if word == table_name or word == schema or block_content:find(lua_escaped_word, 1, true) then
+      if word == table_name or word == schema or word:find(table_name, 1, true) or block_content:find(lua_escaped_word, 1, true) then
         context.type = "table"
         context.table_name = table_name
         context.schema = schema

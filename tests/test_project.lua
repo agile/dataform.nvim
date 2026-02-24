@@ -57,6 +57,23 @@ T['get_context_at_cursor()']['handles multi-line ref blocks'] = function()
   MiniTest.expect.equality(context.schema, 'my_schema')
 end
 
+T['get_context_at_cursor()']['resolves project variable as schema in ref()'] = function()
+  local df = _G.reload_dataform()
+  df.compiled_project_table = {
+    projectConfig = {
+      vars = {
+        MY_SCHEMA = "resolved_schema"
+      }
+    }
+  }
+  setup_buffer({ 'SELECT * FROM ${ref(dataform.projectConfig.vars.MY_SCHEMA, "my_table")}' }, { 1, 65 }) -- On "my_table"
+
+  local context = df.get_context_at_cursor()
+  MiniTest.expect.equality(context.type, 'table')
+  MiniTest.expect.equality(context.schema, 'resolved_schema')
+  MiniTest.expect.equality(context.table_name, 'my_table')
+end
+
 T['get_context_at_cursor()']['identifies js functions'] = function()
   local df = _G.reload_dataform()
   setup_buffer({ 'const x = my_func(123)' }, { 1, 12 })
