@@ -13,8 +13,11 @@ dataform.structural_hashes = {}
 local default_config = {
   compile_on_save = true,
   format_on_save = false,
+  lint_on_save = false,
   formatter_bin = "sqlfluff",
   formatter_options = { "fix", "--force", "-q" },
+  linter_bin = "sqlfluff",
+  linter_options = { "lint", "--format", "json" },
   preview_style = "vsplit", -- Options: 'vsplit', 'float'
   use_treesitter = true,    -- Use tree-sitter for parsing if available
   logging = false,          -- Enable internal logging
@@ -901,6 +904,7 @@ end
 
 local ns = vim.api.nvim_create_namespace("dataform_diagnostics")
 local vt_ns = vim.api.nvim_create_namespace("dataform_virtual_text")
+local lint_ns = vim.api.nvim_create_namespace("dataform_linter")
 
 function dataform.check_unresolved_references(bufnr)
   local diagnostics = {}
@@ -1541,6 +1545,10 @@ function dataform.compile_on_save()
        dataform.show_dry_run_virtual_text()
     end)
   end
+
+  if dataform.config.lint_on_save then
+    dataform.lint()
+  end
 end
 
 function dataform.toggle_compile_on_save()
@@ -1559,6 +1567,62 @@ function dataform.toggle_format_on_save()
   dataform.config.format_on_save = not dataform.config.format_on_save
   local status = dataform.config.format_on_save and "enabled" or "disabled"
   utils.notify("Dataform format on save " .. status .. ".", vim.log.levels.INFO)
+end
+
+function dataform.toggle_lint_on_save()
+  dataform.config.lint_on_save = not dataform.config.lint_on_save
+  local status = dataform.config.lint_on_save and "enabled" or "disabled"
+  utils.notify("Dataform lint on save " .. status .. ".", vim.log.levels.INFO)
+end
+
+function dataform.lint()
+  local bufnr = vim.api.nvim_get_current_buf()
+  local blocks = dataform.get_sqlx_blocks()
+  if not blocks.sql.exists or not dataform.config.linter_bin or dataform.config.linter_bin == "" then
+    return
+  end
+
+  local lines = vim.api.nvim_buf_get_lines(bufnr, blocks.sql.start_line - 1, blocks.sql.end_line, false)
+  local tmp_sql = os.tmpname() .. ".sql"
+  local f = io.open(tmp_sql, "w")
+  if not f then return end
+  f:write(table.concat(lines, "\n"))
+  f:close()
+
+  local args = vim.deepcopy(dataform.config.linter_options or {})
+  table.insert(args, tmp_sql)
+
+  utils.execute_job(dataform.config.linter_bin, args, {
+    json = true,
+    quiet = true,
+    callback = function(code, stdout, stderr)
+      os.remove(tmp_sql)
+      vim.diagnostic.reset(lint_ns, bufnr)
+
+      local ok, decoded = pcall(vim.fn.json_decode, stdout)
+      if not ok or type(decoded) ~= "table" then return end
+
+      local diagnostics = {}
+      -- SQLFluff returns a list of files
+      for _, file_report in ipairs(decoded) do
+        if file_report.violations then
+          for _, v in ipairs(file_report.violations) do
+            table.insert(diagnostics, {
+              lnum = blocks.sql.start_line - 1 + (v.line_no - 1),
+              col = v.line_pos - 1,
+              severity = vim.diagnostic.severity.WARN,
+              message = string.format("[%s] %s", v.code, v.description),
+              source = dataform.config.linter_bin,
+            })
+          end
+        end
+      end
+
+      if #diagnostics > 0 then
+        vim.diagnostic.set(lint_ns, bufnr, diagnostics)
+      end
+    end
+  })
 end
 
 function dataform.toggle_preview_style()

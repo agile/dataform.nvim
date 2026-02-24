@@ -70,6 +70,9 @@ If you are on Neovim 0.11 or later, you can treat Dataform exactly like any othe
         -- Automatically format SQL blocks on save
         format_on_save = false,
 
+        -- Automatically lint SQL blocks on save
+        lint_on_save = false,
+
         -- Layout for compiled SQL previews: 'vsplit' or 'float'
         preview_style = "vsplit",
 
@@ -85,6 +88,10 @@ If you are on Neovim 0.11 or later, you can treat Dataform exactly like any othe
         -- Formatter configuration
         formatter_bin = "sqlfluff",
         formatter_options = { "fix", "--force", "-q" },
+
+        -- Linter configuration
+        linter_bin = "sqlfluff",
+        linter_options = { "lint", "--format", "json" },
     })
 
     -- 2. Enable the server using the new native API
