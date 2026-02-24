@@ -71,4 +71,21 @@ T['code_actions']['create_declaration logic'] = function()
   require('dataform.utils').open_file = old_open_file
 end
 
+T['code_actions']['offers to document unknown columns'] = function()
+  local df = _G.reload_dataform()
+
+  -- Mock graph with no columns
+  df.compiled_project_table = { tables = {} }
+
+  setup_buffer({ 'SELECT new_col FROM table' }, { 1, 8 }) -- On new_col
+
+  local actions = df.get_code_actions()
+  local found = false
+  for _, a in ipairs(actions) do
+    if a.title:find("Document column 'new_col'") then found = true end
+  end
+
+  MiniTest.expect.equality(found, true)
+end
+
 return T

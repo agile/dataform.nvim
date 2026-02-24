@@ -2,6 +2,7 @@ local utils = require("dataform.utils")
 
 local dataform = {}
 dataform.compiled_project_table = {}
+dataform.lsp_client_id = nil
 
 ---@alias DataformUserConfig table
 ---@field compile_on_save boolean? (default: true) Automatically compile Dataform project on saving a .sqlx file.
@@ -216,6 +217,218 @@ function dataform.get_sqlx_blocks()
 end
 
 ---@param user_config DataformUserConfig?
+function dataform.get_lsp_config(user_lsp_opts)
+  local lsp_opts = user_lsp_opts or {}
+
+  local config = {
+    name = "dataform",
+    cmd = function(dispatchers)
+      local function notify(method, params)
+        utils.log("LSP Notify: " .. method)
+      end
+      local function request(method, params, callback)
+        utils.log("LSP Request: " .. method)
+        if method == "initialize" then
+          callback(nil, {
+            capabilities = {
+              textDocumentSync = 1,
+              hoverProvider = true,
+              definitionProvider = true,
+              documentSymbolProvider = true,
+              documentFormattingProvider = true,
+              codeActionProvider = true,
+              executeCommandProvider = {
+                commands = {
+                  "dataform.create_declaration",
+                  "dataform.add_column_description",
+                  "dataform.show_tag_dependency_tree",
+                  "dataform.compile",
+                  "dataform.preview",
+                  "dataform.run_action",
+                  "dataform.show_tree",
+                }
+              }
+            }
+          })
+        elseif method == "initialized" then
+          callback(nil, {})
+        elseif method == "textDocument/codeAction" then
+          local actions = dataform.get_code_actions()
+          callback(nil, actions)
+        elseif method == "textDocument/hover" then
+          local context = dataform.get_context_at_cursor()
+          local all_models = get_all_models()
+          local hover_content = {}
+
+          if context.type == "table" then
+            for _, node in pairs(all_models) do
+              if node.target.name == context.table_name and (not context.schema or node.target.schema == context.schema) then
+                table.insert(hover_content, "# " .. node.target.database .. "." .. node.target.schema .. "." .. node.target.name)
+                table.insert(hover_content, "---")
+                table.insert(hover_content, "**Type:** " .. (node.type or "table"))
+                table.insert(hover_content, "**File:** " .. node.fileName)
+                if node.actionDescriptor and node.actionDescriptor.description then
+                   table.insert(hover_content, "")
+                   table.insert(hover_content, node.actionDescriptor.description)
+                end
+                break
+              end
+            end
+          elseif context.type == "variable" then
+            local vars = dataform.compiled_project_table.projectConfig and dataform.compiled_project_table.projectConfig.vars
+            if vars and vars[context.var_name] then
+              table.insert(hover_content, "# Project Variable: " .. context.var_name)
+              table.insert(hover_content, "---")
+              table.insert(hover_content, "**Value:** `" .. tostring(vars[context.var_name]) .. "`")
+            end
+          elseif context.type == "function" or context.type == "js_module" then
+            local sig = require("dataform.signatures").get_signature_for_name(context.word)
+            if sig then
+              table.insert(hover_content, "# JS Symbol: " .. context.word)
+              table.insert(hover_content, "---")
+              if context.type == "function" then
+                table.insert(hover_content, "**Signature:** `" .. context.word .. "(" .. table.concat(sig.params, ", ") .. ")`")
+              end
+              if sig.doc and sig.doc ~= "" then
+                if context.type == "function" then table.insert(hover_content, "") end
+                table.insert(hover_content, sig.doc)
+              end
+            end
+          end
+
+          if #hover_content > 0 then
+            callback(nil, { contents = { kind = "markdown", value = table.concat(hover_content, "\n") } })
+          else
+            callback(nil, nil)
+          end
+        elseif method == "textDocument/definition" then
+          local context = dataform.get_context_at_cursor()
+          local all_models = get_all_models()
+
+          if context.type == "table" then
+            for _, node in pairs(all_models) do
+              if node.target.name == context.table_name and (not context.schema or node.target.schema == context.schema) then
+                callback(nil, {
+                  uri = "file://" .. vim.fn.fnamemodify(node.fileName, ":p"),
+                  range = {
+                    start = { line = 0, character = 0 },
+                    ["end"] = { line = 0, character = 0 }
+                  }
+                })
+                return true, 1
+              end
+            end
+          end
+          callback(nil, nil)
+        elseif method == "textDocument/documentSymbol" then
+          local blocks = dataform.get_sqlx_blocks()
+          local symbols = {}
+          if blocks.config.exists then
+            table.insert(symbols, {
+              name = "config", kind = 12,
+              range = { start = { line = blocks.config.start_line - 1, character = 0 }, ["end"] = { line = blocks.config.end_line - 1, character = 0 } },
+              selectionRange = { start = { line = blocks.config.start_line - 1, character = 0 }, ["end"] = { line = blocks.config.end_line - 1, character = 0 } }
+            })
+          end
+          if blocks.js.exists then
+            table.insert(symbols, {
+              name = "js", kind = 12,
+              range = { start = { line = blocks.js.start_line - 1, character = 0 }, ["end"] = { line = blocks.js.end_line - 1, character = 0 } },
+              selectionRange = { start = { line = blocks.js.start_line - 1, character = 0 }, ["end"] = { line = blocks.js.end_line - 1, character = 0 } }
+            })
+          end
+          if blocks.sql.exists then
+            table.insert(symbols, {
+              name = "sql", kind = 12,
+              range = { start = { line = blocks.sql.start_line - 1, character = 0 }, ["end"] = { line = blocks.sql.end_line - 1, character = 0 } },
+              selectionRange = { start = { line = blocks.sql.start_line - 1, character = 0 }, ["end"] = { line = blocks.sql.end_line - 1, character = 0 } }
+            })
+          end
+          callback(nil, symbols)
+        elseif method == "textDocument/formatting" then
+          local bufnr = vim.uri_to_bufnr(params.textDocument.uri)
+          local blocks = dataform.get_sqlx_blocks()
+          if not blocks.sql.exists then callback(nil, nil) return true, 1 end
+          local lines = vim.api.nvim_buf_get_lines(bufnr, blocks.sql.start_line - 1, blocks.sql.end_line, false)
+          local tmp_sql = os.tmpname() .. ".sql"
+          local f = io.open(tmp_sql, "w")
+          if f then
+            f:write(table.concat(lines, "\n"))
+            f:close()
+            local options = table.concat(dataform.config.formatter_options or {}, " ")
+            local cmd = string.format("%s %s %s > /dev/null 2>&1", dataform.config.formatter_bin, options, tmp_sql)
+            os.execute(cmd)
+            local f_in = io.open(tmp_sql, "r")
+            if f_in then
+              local formatted = f_in:read("*all")
+              f_in:close()
+              os.remove(tmp_sql)
+              callback(nil, { { range = { start = { line = blocks.sql.start_line - 1, character = 0 }, ["end"] = { line = blocks.sql.end_line - 1, character = 1000 } }, newText = formatted } })
+            else os.remove(tmp_sql) callback(nil, nil) end
+          end
+        elseif method == "workspace/executeCommand" then
+          if params.command == "dataform.create_declaration" then dataform.create_declaration(unpack(params.arguments))
+          elseif params.command == "dataform.add_column_description" then dataform.add_column_description(unpack(params.arguments))
+          elseif params.command == "dataform.show_tag_dependency_tree" then dataform.show_tag_dependency_tree(unpack(params.arguments))
+          elseif params.command == "dataform.compile" then dataform.compile()
+          elseif params.command == "dataform.preview" then dataform.get_compiled_sql_job()
+          elseif params.command == "dataform.run_action" then dataform.run_action_job()
+          elseif params.command == "dataform.show_tree" then dataform.show_dependency_tree()
+          end
+          callback(nil, {})
+        else callback(nil, nil) end
+        return true, 1
+      end
+      return { request = request, notify = notify, is_closing = function() return false end, terminate = function() end }
+    end,
+    root_dir = vim.fn.getcwd(),
+  }
+
+  -- Merge standard LSP options (on_attach, capabilities, etc.)
+  return vim.tbl_deep_extend("force", config, lsp_opts)
+end
+
+function dataform.register_lsp_source(lsp_opts)
+  -- 1. Support Neovim 0.11+ vim.lsp.config
+  if vim.lsp.config then
+    local lsp_config = dataform.get_lsp_config(lsp_opts)
+    -- In 0.11, we register the config so it can be enabled via vim.lsp.enable('dataform')
+    -- We need to ensure 'filetypes' and 'root_markers' are present for auto-enable
+    lsp_config.filetypes = lsp_config.filetypes or { "sqlx" }
+    lsp_config.root_markers = lsp_config.root_markers or { "dataform.json", "workflow_settings.yaml", ".git" }
+
+    vim.lsp.config("dataform", lsp_config)
+  end
+
+  -- 2. Legacy/Immediate Attachment logic
+  -- Skip if in headless mode (e.g., during tests)
+  if #vim.api.nvim_list_uis() == 0 then return end
+
+  -- Ensure only one client instance
+  if dataform.lsp_client_id and vim.lsp.get_client_by_id(dataform.lsp_client_id) then
+    return dataform.lsp_client_id
+  end
+
+  local config = dataform.get_lsp_config(lsp_opts)
+  local client_id = vim.lsp.start_client(config)
+  dataform.lsp_client_id = client_id
+
+  if client_id then
+    vim.api.nvim_create_autocmd("FileType", {
+      pattern = "sqlx",
+      callback = function(args)
+        vim.lsp.buf_attach_client(args.buf, client_id)
+        -- Explicitly trigger LspAttach event for other plugins to see this client
+        vim.api.nvim_exec_autocmds("LspAttach", {
+          buffer = args.buf,
+          data = { client_id = client_id }
+        })
+      end,
+    })
+  end
+  return client_id
+end
+
 function dataform.setup(user_config)
   user_config = user_config or {}
   for key, value in pairs(user_config) do
@@ -223,6 +436,9 @@ function dataform.setup(user_config)
       dataform.config[key] = value
     end
   end
+
+  -- Register as a pseudo-LSP to work with tiny-code-action.nvim, etc.
+  dataform.register_lsp_source()
 end
 
 function dataform.set_dataform_workdir_project_path()
@@ -1345,6 +1561,141 @@ function dataform.create_declaration(schema, name)
     utils.notify("Created declaration: " .. file_path, vim.log.levels.INFO)
     utils.open_file(file_path)
   end
+end
+
+function dataform.add_column_description(col_name)
+  local blocks = dataform.get_sqlx_blocks()
+  if not blocks.config.exists then
+    utils.notify("No config block found to add column description.", vim.log.levels.WARN)
+    return
+  end
+
+  local bufnr = vim.api.nvim_get_current_buf()
+  local lines = vim.api.nvim_buf_get_lines(bufnr, blocks.config.start_line - 1, blocks.config.end_line, false)
+  local config_content = table.concat(lines, "\n")
+
+  -- Check if 'columns:' already exists
+  local col_block_start = config_content:find("columns%s*:%s*{")
+
+  if col_block_start then
+    -- Add to existing block
+    local insert_line = -1
+    for i = blocks.config.start_line, blocks.config.end_line do
+      local line = vim.api.nvim_buf_get_lines(bufnr, i - 1, i, false)[1]
+      if line:find("columns%s*:%s*{") then
+        insert_line = i
+        break
+      end
+    end
+
+    if insert_line ~= -1 then
+      local indent = vim.api.nvim_buf_get_lines(bufnr, insert_line - 1, insert_line, false)[1]:match("^%s*")
+      vim.api.nvim_buf_set_lines(bufnr, insert_line, insert_line, false, {
+        string.format("%s  %s: \"Description for %s\",", indent, col_name, col_name)
+      })
+      utils.notify("Added column entry to config.", vim.log.levels.INFO)
+    end
+  else
+    -- Create new columns block before the final '}'
+    local insert_line = blocks.config.end_line - 1
+    local indent = vim.api.nvim_buf_get_lines(bufnr, insert_line, insert_line + 1, false)[1]:match("^%s*") or "  "
+
+    vim.api.nvim_buf_set_lines(bufnr, insert_line, insert_line, false, {
+      string.format("  columns: {"),
+      string.format("    %s: \"Description for %s\"", col_name, col_name),
+      string.format("  },")
+    })
+    utils.notify("Created columns block in config.", vim.log.levels.INFO)
+  end
+end
+
+function dataform.get_code_actions()
+  local context = dataform.get_context_at_cursor()
+  local lsp_actions = {}
+  local all_models = get_all_models()
+
+  if context.type == "table" then
+    -- ... existing table logic ...
+    local found = false
+    for _, node in pairs(all_models) do
+      if node.target.name == context.table_name and (not context.schema or node.target.schema == context.schema) then
+        found = true
+        break
+      end
+    end
+
+    if not found then
+      table.insert(lsp_actions, {
+        title = "Create declaration for '" .. context.table_name .. "'",
+        kind = "quickfix",
+        command = {
+          command = "dataform.create_declaration",
+          arguments = { context.schema, context.table_name }
+        }
+      })
+    end
+  end
+
+  -- Check for Column (context doesn't identify it yet, we check all models)
+  local is_known_column = false
+  for _, node in pairs(all_models) do
+    if node.actionDescriptor and node.actionDescriptor.columns then
+      for _, col in ipairs(node.actionDescriptor.columns) do
+        if col.path[#col.path] == context.word then
+          is_known_column = true
+          break
+        end
+      end
+    end
+  end
+
+  -- If it's a word in the SQL block and not a known table/var, offer to document it
+  -- We'll refine this later with Tree-sitter
+  if not is_known_column and context.word ~= "" and context.type == nil then
+     table.insert(lsp_actions, {
+       title = "Document column '" .. context.word .. "'",
+       kind = "quickfix",
+       command = {
+         command = "dataform.add_column_description",
+         arguments = { context.word }
+       }
+     })
+  end
+
+  if context.type == "tag" then
+    table.insert(lsp_actions, {
+      title = "Show dependency tree for tag '" .. context.tag_name .. "'",
+      kind = "source",
+      command = {
+        command = "dataform.show_tag_dependency_tree",
+        arguments = { context.tag_name }
+      }
+    })
+  end
+
+  -- Add global Dataform actions
+  table.insert(lsp_actions, {
+    title = "Dataform: Compile Project",
+    kind = "source",
+    command = { command = "dataform.compile" }
+  })
+  table.insert(lsp_actions, {
+    title = "Dataform: Preview SQL",
+    kind = "source",
+    command = { command = "dataform.preview" }
+  })
+  table.insert(lsp_actions, {
+    title = "Dataform: Run Current Action",
+    kind = "source",
+    command = { command = "dataform.run_action" }
+  })
+  table.insert(lsp_actions, {
+    title = "Dataform: Show Dependency Tree",
+    kind = "source",
+    command = { command = "dataform.show_tree" }
+  })
+
+  return lsp_actions
 end
 
 function dataform.code_action()

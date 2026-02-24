@@ -5,6 +5,8 @@ local M = {}
 -- Routes calls made to this module to functions in the
 -- plugin's other modules.
 M.setup = dataform.setup
+M.register_lsp_source = dataform.register_lsp_source
+M.get_lsp_config = dataform.get_lsp_config
 M.set_dataform_workdir_project_path = dataform.set_dataform_workdir_project_path
 M.compile = dataform.compile
 M.compile_on_save = dataform.compile_on_save

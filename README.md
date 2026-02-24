@@ -9,9 +9,10 @@
 
 ## 🪄 Features
 
+- **Native LSP Integration**: Registers as a pseudo-LSP client. Supports `gd` (Go to Definition), `K` (Hover), `documentSymbol`, `formatting`, and `codeAction` using your standard LSP keybindings and plugins (like `tiny-code-action.nvim`).
 - **Project Compilation**: Automatically compiles Dataform project on first open or on save.
-- **Generalized Navigation**: Robust "Go to Definition" and "Find References" for:
-    - `${ref()}` and `${resolve()}` (including multi-line calls).
+- **Generalized Navigation**: Robust navigation and reference finding for:
+    - `${ref()}` and `${resolve()}` (including multi-line calls and project variable schemas).
     - JavaScript variables and functions in `js { ... }` blocks.
     - External JavaScript modules in the `includes/` directory.
     - Project Variables defined in `workflow_settings.yaml`.
@@ -22,12 +23,13 @@
 - **Intelligent Autocompletion**:
     - Dataform Action names (Models/Declarations) within `ref()` or `resolve()`.
     - **Column Names**: Metadata-aware completion for columns documented in your project.
-    - Supports both `nvim-cmp` and `blink.cmp`.
-- **Metadata Hovers**: See table documentation, column descriptions, and Dataform config keyword help. Now includes signature information for JavaScript functions.
-- **Inline Diagnostics**: Compilation errors from `dataform compile` are mapped directly to buffers.
-- **Configurable Formatting**: Format SQL blocks using `sqlfluff` on command or automatically on save.
-- **Action Runner**: Run specific models, tags, or the entire project directly from Neovim.
-- **Dependency Finder**: Smart dependencies/dependents finder and navigable dependency trees.
+    - **JS Symbols**: Suggests constants and functions from `includes/` and local `js` blocks.
+- **Advanced Code Actions**:
+    - **Document Column**: One-click to add an undocumented column to your `config` block.
+    - **Create Declaration**: Automatically scaffold a new declaration file for unresolved `ref()` targets.
+- **Interactive Dependency Graph**: Navigable, floating window tree view. Press `<CR>` on any node to jump to its definition. Supports tag-scoped trees!
+- **Enhanced Diagnostics**: Real-time warnings for unresolved project variables and JavaScript references, alongside standard compilation errors.
+- **Robust Logging**: Comprehensive internal logging system for troubleshooting environment or path resolution issues.
 
 ## 📜 Requirements
 
@@ -37,10 +39,14 @@
 
 ### Optional Enhancements
 
-- [telescope.nvim](https://github.com/nvim-telescope/telescope.nvim) for smart dependencies/dependents finder.
+- [tiny-code-action.nvim](https://github.com/rachartier/tiny-code-action.nvim) for a beautiful code action UI.
+- [telescope.nvim](https://github.com/nvim-telescope/telescope.nvim) for smart symbol searching.
 - [nvim-notify](https://github.com/rcarriga/nvim-notify) for enhanced notifications.
 
 ## 🧪 Installation & Configuration
+
+### Simple Setup (Recommended)
+For most users, simply calling `setup` is enough. This works on all Neovim versions and automatically registers the Dataform pseudo-LSP with sensible defaults.
 
 ```lua
 -- Example with lazy.nvim
@@ -50,43 +56,64 @@
     'rcarriga/nvim-notify',
     'nvim-telescope/telescope.nvim'
   },
-  config = function ()
-    require('dataform').setup({
-        -- Automatically compile on save (default: true)
-        compile_on_save = true,
+    config = function ()
+      require('dataform').setup({
+          -- Automatically compile on save (default: true)
+          compile_on_save = true,
 
-        -- Automatically format SQL blocks on save (default: false)
-        format_on_save = false,
+          -- Automatically format SQL blocks on save (default: false)
+          format_on_save = false,
 
-        -- Layout for compiled SQL previews: 'vsplit' or 'float' (default: 'vsplit')
-        preview_style = "vsplit",
+          -- Layout for compiled SQL previews: 'vsplit' or 'float' (default: 'vsplit')
+          preview_style = "vsplit",
 
-        -- Formatter configuration
-        formatter_bin = "sqlfluff",
-        formatter_options = { "fix", "--force", "-q" },
-    })
-  end
-}
+          -- Use tree-sitter for block detection if available (default: true)
+          use_treesitter = true,
+
+          -- Enable internal logging (default: false)
+          logging = false,
+
+          -- Clear log file on startup (default: true)
+          clear_log_on_start = true,
+
+          -- Formatter configuration
+          formatter_bin = "sqlfluff", -- (default: 'sqlfluff')
+          formatter_options = { "fix", "--force", "-q" }, -- (default: as shown)
+      })
+    end
+  }
+
 ```
 
-## 🌀 Commands
+### Neovim 0.11+ Setup
+If you are on Neovim 0.11 or later, you can treat Dataform exactly like any other Language Server using the new native configuration system.
 
-| Command | Action |
-|---|---|
-|`:DataformCompileFull` | Preview compiled SQL with dry-run stats (respects `preview_style`). |
-|`:DataformGoToRef` | Jump to definition of symbol under cursor (Table, JS var, Project Var, CTE). |
-|`:DataformHover` | Show documentation/metadata for symbol under cursor. |
-|`:DataformFindReferences`| Find all usages of the table, variable, or function under cursor. |
-|`:DataformSignatureHelp`| Manually trigger the signature hint window. |
-|`:DataformShowDryRun`| Refresh the inline dry-run virtual text. |
-|`:DataformToggleCompileOnSave`| Toggle automatic compilation. |
-|`:DataformToggleFormatOnSave`| Toggle automatic formatting. |
-|`:DataformTogglePreviewStyle`| Switch between 'vsplit' and 'float' for previews. |
-|`:DataformFormat` | Manually format the SQL block. |
-|`:DataformShowDependencyTree`| Open a buffer showing the full dependency tree. |
-|`:DataformRunAction` | Run the current model in BigQuery. |
-|`:DataformRunTag <tag>` | Run actions associated with a specific tag. |
-|`:DataformRunAll` | Run the entire Dataform project. |
+```lua
+local df = require('dataform')
+
+-- 1. Initialize plugin settings (optional)
+df.setup({ compile_on_save = true })
+
+-- 2. Enable the server using the new native API
+vim.lsp.enable('dataform')
+```
+
+### Manual LSP Setup (Advanced / Pre-0.11)
+If you want full manual control over the LSP lifecycle (e.g., custom `on_attach` or `capabilities`), you can retrieve the standard config and start it yourself.
+
+```lua
+local df = require('dataform')
+
+local lsp_config = df.get_lsp_config({
+  on_attach = function(client, bufnr)
+    -- Your standard LSP keybindings here
+  end,
+  capabilities = require('cmp_nvim_lsp').default_capabilities(),
+})
+
+-- Start the client manually
+vim.lsp.start(lsp_config)
+```
 
 ## 🚀 Development & Testing
 
@@ -94,8 +121,7 @@ This plugin uses `mini.test` for its test suite. To run the tests locally:
 
 1. Clone the repository.
 2. Install pre-commit (`brew install pre-commit` or [see installation notes](https://pre-commit.com/#installation)) and install pre-commit hooks: `pre-commit install`
-3. Run `make test`. (The test runner will automatically download dependencies to `tests/.deps/`).
-
+3. Run `make test`. (Dependencies are automatically downloaded to `tests/.deps/`).
 
 ## 🌳 Tree-sitter Support
 
