@@ -285,6 +285,23 @@ function dataform.go_to_ref()
       end
     end
 
+    -- Project Variable navigation
+    local var_path = block_content:match("dataform%.projectConfig%.vars%.([%w_]+)")
+    if var_path and word:find(var_path, 1, true) then
+      local settings_file = "workflow_settings.yaml"
+      if vim.fn.filereadable(settings_file) == 1 then
+        utils.open_file(settings_file)
+        local file_lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
+        for i, line in ipairs(file_lines) do
+          if line:find(var_path .. ":") then
+            vim.api.nvim_win_set_cursor(0, {i, 0})
+            return
+          end
+        end
+        return
+      end
+    end
+
     -- JS variable navigation within ${ ... }
     if word:find("%.") then
       local parts = vim.split(word, "%.")
@@ -430,7 +447,21 @@ function dataform.hover()
     end
   end
 
-  -- 3. Config block hovers
+  -- 3. Check for Project Variables hover
+  if #hover_content == 0 then
+    local var_path = current_line:match("dataform%.projectConfig%.vars%.([%w_]+)")
+    if var_path and word:find(var_path, 1, true) then
+      local vars = dataform.compiled_project_table.projectConfig and dataform.compiled_project_table.projectConfig.vars
+      if vars and vars[var_path] then
+        table.insert(hover_content, "# Project Variable: " .. var_path)
+        table.insert(hover_content, "---")
+        table.insert(hover_content, "**Value:** `" .. tostring(vars[var_path]) .. "`")
+        table.insert(hover_content, "**Defined in:** `workflow_settings.yaml`")
+      end
+    end
+  end
+
+  -- 4. Config block hovers
   if #hover_content == 0 then
     if word == "nonNull" then
       table.insert(hover_content, "# assertion: nonNull")
@@ -882,6 +913,73 @@ function dataform.compile_on_save()
   if dataform.config.compile_on_save then
     dataform.compile()
   end
+end
+
+function dataform.find_variable_references()
+  local cursor_pos = vim.api.nvim_win_get_cursor(0)
+  local row, col = cursor_pos[1], -- row is 1-indexed
+    cursor_pos[2]
+  local lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
+  local current_line = lines[row] or ""
+
+  -- Extraction logic for variable under cursor
+  local var_path = current_line:match("dataform%.projectConfig%.vars%.([%w_]+)")
+  if not var_path then
+    -- Try to get the word under cursor if we are in workflow_settings.yaml
+    if utils.get_current_file_path():find("workflow_settings.yaml", 1, true) then
+      var_path = vim.fn.expand("<cword>")
+    end
+  end
+
+  if not var_path or var_path == "" then
+    utils.notify("No project variable found under cursor.", vim.log.levels.WARN)
+    return
+  end
+
+  utils.notify("Finding references for variable: " .. var_path .. "...", vim.log.levels.INFO)
+
+  -- Use grep to find all occurrences of the variable pattern
+  local pattern = "dataform%.projectConfig%.vars%." .. var_path
+  local cmd = string.format("grep -rnE %s . --include='*.sqlx' --include='*.js' --include='workflow_settings.yaml' 2>/dev/null",
+    vim.fn.shellescape(pattern))
+
+  -- Also search for the definition in workflow_settings.yaml
+  local def_pattern = "^" .. var_path .. ":"
+  local cmd2 = string.format("grep -rnE %s workflow_settings.yaml 2>/dev/null", vim.fn.shellescape(def_pattern))
+
+  local _, output1 = utils.os_execute_with_status(cmd, false, true)
+  local _, output2 = utils.os_execute_with_status(cmd2, false, true)
+
+  local combined_output = output2 .. output1
+  local results = {}
+  local seen = {}
+  for line in combined_output:gmatch("[^\r\n]+") do
+    if not seen[line] then
+      table.insert(results, line)
+      seen[line] = true
+    end
+  end
+
+  if #results == 0 then
+    utils.notify("No references found for variable: " .. var_path, vim.log.levels.INFO)
+    return
+  end
+
+  -- Show results in a quickfix list
+  local qf_list = {}
+  for _, line in ipairs(results) do
+    local file, lnum, text = line:match("([^:]+):(%d+):(.*)")
+    if file and lnum then
+      table.insert(qf_list, {
+        filename = file,
+        lnum = tonumber(lnum),
+        text = vim.trim(text)
+      })
+    end
+  end
+
+  vim.fn.setqflist(qf_list)
+  vim.cmd("copen")
 end
 
 return dataform
