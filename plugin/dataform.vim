@@ -47,3 +47,4 @@ command! -nargs=0 DataformFindDependencies lua require('dataform').find_model_de
 command! -nargs=0 DataformFindDependents lua require('dataform').find_model_dependents()
 command! -nargs=0 DataformShowDependencyTree lua require('dataform').show_dependency_tree()
 command! -nargs=0 DataformFindVariableReferences lua require('dataform').find_variable_references()
+command! -nargs=0 DataformFindReferences lua require('dataform').find_references()

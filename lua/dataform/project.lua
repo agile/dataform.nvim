@@ -184,13 +184,13 @@ local function get_dataform_definitions_file_path()
   )
 end
 
-function dataform.go_to_ref()
+local function get_context_at_cursor()
   local cursor_pos = vim.api.nvim_win_get_cursor(0)
   local row, col = cursor_pos[1], cursor_pos[2]
   local lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
-  local current_line = lines[row]
+  local current_line = lines[row] or ""
 
-  -- Improve word extraction to handle dots (e.g., constants.TAX_RATE)
+  -- Extract word under cursor (including dots)
   local line = current_line
   local col_start = col
   while col_start > 0 and line:sub(col_start, col_start):match("[%w_%.]") do
@@ -203,6 +203,72 @@ function dataform.go_to_ref()
   local word = line:sub(col_start + 1, col_end - 1)
   if word == "" then word = vim.fn.expand("<cword>") end
 
+  local context = {
+    word = word,
+    row = row,
+    col = col,
+    current_line = current_line,
+    lines = lines,
+  }
+
+  local lua_escaped_word = word:gsub("([%(%)%.%%%+%-%*%?%[%]%^%$])", "%%%1")
+
+  -- 1. Check for ref/resolve
+  -- Find the surrounding ${ ... } block if it exists
+  local start_col, end_col
+  local s = current_line:sub(1, col + 1):reverse():find("{$", 1, true)
+  if s then
+    start_col = col + 1 - s
+    local e = current_line:find("}", col + 1, true)
+    if e then
+      end_col = e
+      local block_content = current_line:sub(start_col + 1, end_col - 1)
+
+      -- Extract table/schema from ref/resolve
+      local _, _, schema, table_name = block_content:find('ref%(%s*["\']([^"\']+)["\']%s*,%s*["\']([^"\']+)["\']%s*%)')
+      if not table_name then
+        _, _, table_name = block_content:find('ref%(%s*["\']([^"\']+)["\']%s*%)')
+      end
+      if not table_name then
+        _, _, schema, table_name = block_content:find('resolve%(%s*["\']([^"\']+)["\']%s*,%s*["\']([^"\']+)["\']%s*%)')
+      end
+      if not table_name then
+        _, _, table_name = block_content:find('resolve%(%s*["\']([^"\']+)["\']%s*%)')
+      end
+
+      if table_name and (word == table_name or word == schema) then
+        context.type = "table"
+        context.table_name = table_name
+        context.schema = schema
+        return context
+      end
+    end
+  end
+
+  -- 2. Check for project variables
+  local var_match = current_line:match("dataform%.projectConfig%.vars%.([%w_]+)")
+  if var_match and (word == var_match or current_line:find("dataform.projectConfig.vars." .. lua_escaped_word, 1, true)) then
+    context.type = "variable"
+    context.var_name = word:match("([%w_]+)$")
+    return context
+  end
+
+  -- 3. Check for JS functions (word followed by '(')
+  if current_line:find(lua_escaped_word .. "%s*%(") then
+    context.type = "function"
+    context.func_name = word
+    return context
+  end
+
+  return context
+end
+
+function dataform.go_to_ref()
+  local context = get_context_at_cursor()
+  local word = context.word
+  local lines = context.lines
+  local row = context.row
+
   -- 1. Check for CTE navigation (SQL files only or SQL blocks)
   local cte_pattern = "WITH%s+" .. word .. "%s+AS%s*%("
   local cte_pattern_comma = ",%s*" .. word .. "%s+AS%s*%("
@@ -213,156 +279,81 @@ function dataform.go_to_ref()
     end
   end
 
-  -- 2. Check for ${ ... } blocks (Ref/Resolve/JS)
-  local start_row, start_col, end_row, end_col
-  -- Find start of ${
-  for r = row, 1, -1 do
-    local line = lines[r]
-    local search_start = (r == row) and col or #line
-    -- Search backwards for ${
-    local s = line:sub(1, search_start + 1):reverse():find("{$", 1, true)
-    if s then
-      start_row = r
-      start_col = #line:sub(1, search_start + 1) - s
-      break
-    end
-  end
+  if context.type == "table" then
+    local df_tables = dataform.compiled_project_table.tables or {}
+    local df_declarations = dataform.compiled_project_table.declarations or {}
+    local df_ops = dataform.compiled_project_table.operations or {}
+    local all_nodes = {}
+    for _, v in ipairs(df_tables) do table.insert(all_nodes, v) end
+    for _, v in ipairs(df_declarations) do table.insert(all_nodes, v) end
+    for _, v in ipairs(df_ops) do table.insert(all_nodes, v) end
 
-  -- Find end of }
-  if start_row then
-    for r = row, #lines do
-      local line = lines[r]
-      local search_start = (r == row) and col or 0
-      local e = line:find("}", search_start + 1, true)
-      if e then
-        end_row = r
-        end_col = e
-        break
+    for _, node in pairs(all_nodes) do
+      if node.target.name == context.table_name and (node.target.schema == context.schema or not context.schema) then
+        return utils.open_file(node.fileName)
       end
     end
   end
 
-  if start_row and end_row then
-    local block_content = ""
-    for r = start_row, end_row do
-      local line = lines[r]
-      if r == start_row and r == end_row then
-        block_content = line:sub(start_col + 1, end_col)
-      elseif r == start_row then
-        block_content = line:sub(start_col + 1)
-      elseif r == end_row then
-        block_content = block_content .. "\n" .. line:sub(1, end_col)
-      else
-        block_content = block_content .. "\n" .. line
-      end
-    end
-
-    -- Extract ref/resolve
-    local _, _, schema, table_name = block_content:find('ref%(%s*["\']([^"\']+)["\']%s*,%s*["\']([^"\']+)["\']%s*%)')
-    if not table_name then
-      _, _, table_name = block_content:find('ref%(%s*["\']([^"\']+)["\']%s*%)')
-    end
-    if not table_name then
-      _, _, schema, table_name = block_content:find('resolve%(%s*["\']([^"\']+)["\']%s*,%s*["\']([^"\']+)["\']%s*%)')
-    end
-    if not table_name then
-      _, _, table_name = block_content:find('resolve%(%s*["\']([^"\']+)["\']%s*%)')
-    end
-
-    if table_name then
-      local df_tables = dataform.compiled_project_table.tables or {}
-      local df_declarations = dataform.compiled_project_table.declarations or {}
-      local df_ops = dataform.compiled_project_table.operations or {}
-      local all_nodes = {}
-      for _, v in ipairs(df_tables) do table.insert(all_nodes, v) end
-      for _, v in ipairs(df_declarations) do table.insert(all_nodes, v) end
-      for _, v in ipairs(df_ops) do table.insert(all_nodes, v) end
-
-      for _, node in pairs(all_nodes) do
-        if node.target.name == table_name and (node.target.schema == schema or not schema) then
-          return utils.open_file(node.fileName)
+  if context.type == "variable" then
+    local var_path = context.var_name
+    local settings_file = "workflow_settings.yaml"
+    if vim.fn.filereadable(settings_file) == 1 then
+      utils.open_file(settings_file)
+      local file_lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
+      for i, line in ipairs(file_lines) do
+        if line:find("^" .. var_path .. ":") or line:find(" " .. var_path .. ":") then
+          vim.api.nvim_win_set_cursor(0, {i, 0})
+          return
         end
       end
     end
+  end
 
-    -- Project Variable navigation
-    local var_path = block_content:match("dataform%.projectConfig%.vars%.([%w_]+)")
-    if var_path and word:find(var_path, 1, true) then
-      local settings_file = "workflow_settings.yaml"
-      if vim.fn.filereadable(settings_file) == 1 then
-        utils.open_file(settings_file)
-        local file_lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
-        for i, line in ipairs(file_lines) do
-          if line:find(var_path .. ":") then
+  -- JS navigation (Module navigation like module.func)
+  if word:find("%.") then
+    local parts = vim.split(word, "%.")
+    local js_module = parts[1]
+    local var_name = parts[2]
+
+    -- Check in includes/
+    local includes_file = "includes/" .. js_module .. ".js"
+    if vim.fn.filereadable(includes_file) == 1 then
+      utils.open_file(includes_file)
+      local file_lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
+      local patterns = {
+        "const%s+" .. var_name .. "%s*=",
+        "let%s+" .. var_name .. "%s*=",
+        "function%s+" .. var_name .. "%s*%(",
+        var_name .. "%s*[:=]%s*function"
+      }
+      for i, line in ipairs(file_lines) do
+        for _, pattern in ipairs(patterns) do
+          if line:find(pattern) then
             vim.api.nvim_win_set_cursor(0, {i, 0})
             return
           end
         end
-        return
       end
-    end
-
-    -- JS variable navigation within ${ ... }
-    if word:find("%.") then
-      local parts = vim.split(word, "%.")
-      local js_module = parts[1]
-      local var_name = parts[2]
-
-      -- Check in includes/
-      local includes_file = "includes/" .. js_module .. ".js"
-      if vim.fn.filereadable(includes_file) == 1 then
-        utils.open_file(includes_file)
-        -- Try to find variable in that file
-        local file_lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
-        local pattern = "const%s+" .. var_name .. "%s*="
-        for i, line in ipairs(file_lines) do
-          if line:find(pattern) then
-            vim.api.nvim_win_set_cursor(0, {i, 0})
-            break
-          end
-        end
-        return
-      end
-
-      -- Check for require in js block
-      local blocks = dataform.get_sqlx_blocks()
-      if blocks.js.exists then
-        for i = blocks.js.start_line, blocks.js.end_line do
-          local line = lines[i]
-          local req_pattern = "const%s+" .. js_module .. "%s*=%s*require%([\"'](.+)[\"']%)"
-          local _, _, req_path = line:find(req_pattern)
-          if req_path then
-            if req_path:sub(1,1) ~= "/" and req_path:sub(1,2) ~= "./" then
-               req_path = "includes/" .. req_path
-            end
-            if req_path:sub(-3) ~= ".js" then
-               req_path = req_path .. ".js"
-            end
-            if vim.fn.filereadable(req_path) == 1 then
-              utils.open_file(req_path)
-              return
-            end
-          end
-        end
-      end
+      return
     end
   end
 
-  -- 3. Check for local JS variable in JS block
+  -- Search for local JS definition
   local blocks = dataform.get_sqlx_blocks()
-  if blocks.js.exists then
-    if row >= blocks.js.start_line and row <= blocks.js.end_line then
-      -- Already in JS block, maybe searching for definition within it
-    else
-      -- Search for word definition in JS block
-      local var_pattern = "const%s+" .. word .. "%s*="
-      local var_pattern_let = "let%s+" .. word .. "%s*="
-      local var_pattern_var = "var%s+" .. word .. "%s*="
-      local func_pattern = "function%s+" .. word .. "%s*%("
+  local var_patterns = {
+    "const%s+" .. word .. "%s*=",
+    "let%s+" .. word .. "%s*=",
+    "var%s+" .. word .. "%s*=",
+    "function%s+" .. word .. "%s*%(",
+    word .. "%s*[:=]%s*function"
+  }
 
-      for i = blocks.js.start_line, blocks.js.end_line do
-        local line = lines[i]
-        if line:find(var_pattern) or line:find(var_pattern_let) or line:find(var_pattern_var) or line:find(func_pattern) then
+  if blocks.js.exists then
+    for i = blocks.js.start_line, blocks.js.end_line do
+      local line = lines[i]
+      for _, pattern in ipairs(var_patterns) do
+        if line:find(pattern) then
           vim.api.nvim_win_set_cursor(0, {i, 0})
           return
         end
@@ -372,39 +363,16 @@ function dataform.go_to_ref()
 end
 
 function dataform.hover()
-  local cursor_pos = vim.api.nvim_win_get_cursor(0)
-  local row, col = cursor_pos[1], cursor_pos[2]
-  local lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
-  local current_line = lines[row]
-
-  -- Extraction logic for word under cursor (including dots)
-  local line = current_line
-  local col_start = col
-  while col_start > 0 and line:sub(col_start, col_start):match("[%w_%.]") do
-    col_start = col_start - 1
-  end
-  local col_end = col + 1
-  while col_end <= #line and line:sub(col_end, col_end):match("[%w_%.]") do
-    col_end = col_end + 1
-  end
-  local word = line:sub(col_start + 1, col_end - 1)
+  local context = get_context_at_cursor()
+  local word = context.word
   if word == "" then return end
 
   local hover_content = {}
 
-  -- 1. Check for ref/resolve hover (Table/Declaration metadata)
-  local _, _, table_name = current_line:find('ref%(%s*["\']([^"\']+)["\']%s*%)')
-  if not table_name then
-    _, _, _, table_name = current_line:find('ref%(%s*["\']([^"\']+)["\']%s*,%s*["\']([^"\']+)["\']%s*%)')
-  end
-  if not table_name then
-    _, _, table_name = current_line:find('resolve%(%s*["\']([^"\']+)["\']%s*%)')
-  end
-
-  if table_name and word:find(table_name, 1, true) then
+  if context.type == "table" then
     local all_models = get_all_models()
     for _, node in pairs(all_models) do
-      if node.target.name == table_name then
+      if node.target.name == context.table_name and (not context.schema or node.target.schema == context.schema) then
         table.insert(hover_content, "# " .. node.target.database .. "." .. node.target.schema .. "." .. node.target.name)
         table.insert(hover_content, "---")
         table.insert(hover_content, "**Type:** " .. (node.type or "table"))
@@ -418,7 +386,7 @@ function dataform.hover()
     end
   end
 
-  -- 2. Check for Column hover (Search all columns in compiled graph)
+  -- Column hover
   if #hover_content == 0 then
     local all_models = get_all_models()
     local found_columns = {}
@@ -447,34 +415,29 @@ function dataform.hover()
     end
   end
 
-  -- 3. Check for Project Variables hover
-  if #hover_content == 0 then
-    local var_path = current_line:match("dataform%.projectConfig%.vars%.([%w_]+)")
-    if var_path and word:find(var_path, 1, true) then
-      local vars = dataform.compiled_project_table.projectConfig and dataform.compiled_project_table.projectConfig.vars
-      if vars and vars[var_path] then
-        table.insert(hover_content, "# Project Variable: " .. var_path)
-        table.insert(hover_content, "---")
-        table.insert(hover_content, "**Value:** `" .. tostring(vars[var_path]) .. "`")
-        table.insert(hover_content, "**Defined in:** `workflow_settings.yaml`")
-      end
+  -- Project Variables hover
+  if #hover_content == 0 and context.type == "variable" then
+    local var_path = context.var_name
+    local vars = dataform.compiled_project_table.projectConfig and dataform.compiled_project_table.projectConfig.vars
+    if vars and vars[var_path] then
+      table.insert(hover_content, "# Project Variable: " .. var_path)
+      table.insert(hover_content, "---")
+      table.insert(hover_content, "**Value:** `" .. tostring(vars[var_path]) .. "`")
+      table.insert(hover_content, "**Defined in:** `workflow_settings.yaml`")
     end
   end
 
-  -- 4. Config block hovers
+  -- Config block hovers
   if #hover_content == 0 then
-    if word == "nonNull" then
-      table.insert(hover_content, "# assertion: nonNull")
+    local assertions_help = {
+      nonNull = "This condition asserts that the specified columns are not null across all table rows.",
+      uniqueKey = "This condition asserts that, in a specified column, no table rows have the same value.",
+      rowConditions = "This condition asserts that all table rows follow the custom logic you define."
+    }
+    if assertions_help[word] then
+      table.insert(hover_content, "# assertion: " .. word)
       table.insert(hover_content, "---")
-      table.insert(hover_content, "This condition asserts that the specified columns are not null across all table rows.")
-    elseif word == "uniqueKey" then
-      table.insert(hover_content, "# assertion: uniqueKey")
-      table.insert(hover_content, "---")
-      table.insert(hover_content, "This condition asserts that, in a specified column, no table rows have the same value.")
-    elseif word == "rowConditions" then
-      table.insert(hover_content, "# assertion: rowConditions")
-      table.insert(hover_content, "---")
-      table.insert(hover_content, "This condition asserts that all table rows follow the custom logic you define.")
+      table.insert(hover_content, assertions_help[word])
     end
   end
 
@@ -922,38 +885,103 @@ function dataform.find_variable_references()
   local lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
   local current_line = lines[row] or ""
 
-  -- Extraction logic for variable under cursor
-  local var_path = current_line:match("dataform%.projectConfig%.vars%.([%w_]+)")
-  if not var_path then
-    -- Try to get the word under cursor if we are in workflow_settings.yaml
-    if utils.get_current_file_path():find("workflow_settings.yaml", 1, true) then
-      var_path = vim.fn.expand("<cword>")
-    end
+  -- Improve word extraction to handle dots (e.g., constants.TAX_RATE)
+  local line = current_line
+  local col_start = col
+  while col_start > 0 and line:sub(col_start, col_start):match("[%w_%.]") do
+    col_start = col_start - 1
   end
+  local col_end = col + 1
+  while col_end <= #line and line:sub(col_end, col_end):match("[%w_%.]") do
+    col_end = col_end + 1
+  end
+  local word = line:sub(col_start + 1, col_end - 1)
+  if word == "" then word = vim.fn.expand("<cword>") end
 
-  if not var_path or var_path == "" then
-    utils.notify("No project variable found under cursor.", vim.log.levels.WARN)
+  if word == "" then
+    utils.notify("No symbol under cursor.", vim.log.levels.WARN)
     return
   end
 
-  utils.notify("Finding references for variable: " .. var_path .. "...", vim.log.levels.INFO)
+  local search_patterns = {}
+  local label = word
+  local is_var = false
+  local is_ref = false
+  local is_func = false
+  local escaped_word = word:gsub("%.", "\\.")
+  local lua_escaped_word = word:gsub("([%(%)%.%%%+%-%*%?%[%]%^%$])", "%%%1")
 
-  -- Use grep to find all occurrences of the variable pattern
-  local pattern = "dataform%.projectConfig%.vars%." .. var_path
-  local cmd = string.format("grep -rnE %s . --include='*.sqlx' --include='*.js' --include='workflow_settings.yaml' 2>/dev/null",
-    vim.fn.shellescape(pattern))
+  -- 1. Check for project variables: dataform.projectConfig.vars.NAME
+  local var_match = current_line:match("dataform%.projectConfig%.vars%.([%w_]+)")
+  if var_match and (word == var_match or current_line:find("dataform.projectConfig.vars." .. lua_escaped_word, 1, true)) then
+    is_var = true
+    table.insert(search_patterns, "dataform\\.projectConfig\\.vars\\." .. escaped_word)
+    -- Also search in workflow_settings.yaml definition (e.g., "my_var: value")
+    table.insert(search_patterns, "^" .. escaped_word .. ":")
+    label = "variable: " .. word
+  end
 
-  -- Also search for the definition in workflow_settings.yaml
-  local def_pattern = "^" .. var_path .. ":"
-  local cmd2 = string.format("grep -rnE %s workflow_settings.yaml 2>/dev/null", vim.fn.shellescape(def_pattern))
+  -- 2. Check for ref/resolve (Table references)
+  if not is_var then
+    -- Check if it looks like a ref/resolve call in SQLX or JS, or a dependency/name
+    if current_line:find("ref%s*%(.-['\"]" .. lua_escaped_word .. "['\"].-%)") or
+       current_line:find("resolve%s*%(.-['\"]" .. lua_escaped_word .. "['\"].-%)") or
+       current_line:find('name%s*:%s*["\']' .. lua_escaped_word .. '["\']') or
+       current_line:find('dependencies%s*:%s*%[[^%]]*["\']' .. lua_escaped_word .. '["\']') then
 
-  local _, output1 = utils.os_execute_with_status(cmd, false, true)
-  local _, output2 = utils.os_execute_with_status(cmd2, false, true)
+      is_ref = true
+      -- Search for ref("word"), ref("schema", "word"), resolve("word"), etc.
+      table.insert(search_patterns, "ref%s*%(%s*([\"'][^\"']+[\"']%s*,%s*)?[\"']" .. escaped_word .. "[\"']%s*%)")
+      table.insert(search_patterns, "resolve%s*%(%s*([\"'][^\"']+[\"']%s*,%s*)?[\"']" .. escaped_word .. "[\"']%s*%)")
+      -- Search in dependencies list: dependencies: [ "word" ]
+      table.insert(search_patterns, "dependencies%s*:%s*%[[^%]]*[\"']" .. escaped_word .. "[\"'][^%]]*%]")
+      -- Search for definition: name: "word"
+      table.insert(search_patterns, 'name%s*:%s*["\']' .. escaped_word .. '["\']')
+      label = "table reference: " .. word
+    end
+  end
 
-  local combined_output = output2 .. output1
+  -- 3. Check for JS functions
+  if not is_var and not is_ref then
+    -- If word is followed by '(', it might be a function call
+    if current_line:find(lua_escaped_word .. "%s*%(") then
+      is_func = true
+      table.insert(search_patterns, escaped_word .. "%s*%(")
+      table.insert(search_patterns, "function%s+" .. escaped_word)
+      table.insert(search_patterns, escaped_word .. "%s*[:=]%s*function")
+      table.insert(search_patterns, "module%.exports%s*=%s*{[^}]*" .. escaped_word)
+      label = "function: " .. word
+    end
+  end
+
+  -- 4. Special case for workflow_settings.yaml if we are in it
+  if not is_var and not is_ref and not is_func then
+    if utils.get_current_file_path():find("workflow_settings.yaml", 1, true) then
+      is_var = true
+      table.insert(search_patterns, "dataform\\.projectConfig\\.vars\\." .. escaped_word)
+      table.insert(search_patterns, "^" .. escaped_word .. ":")
+      label = "variable: " .. word
+    end
+  end
+
+  -- 5. Final fallback: search for the word itself if no specific patterns found
+  if #search_patterns == 0 then
+    table.insert(search_patterns, escaped_word)
+    label = "symbol: " .. word
+  end
+
+  utils.notify("Finding references for " .. label .. "...", vim.log.levels.INFO)
+
+  -- Use grep to find all occurrences
+  local combined_pattern = table.concat(search_patterns, "|")
+  local cmd = string.format("grep -rnE %s . --include='*.sqlx' --include='*.js' --include='workflow_settings.yaml' --include='*.yaml' --include='*.json' 2>/dev/null",
+    vim.fn.shellescape(combined_pattern))
+
+  local _, output = utils.os_execute_with_status(cmd, false, true)
+
   local results = {}
   local seen = {}
-  for line in combined_output:gmatch("[^\r\n]+") do
+  for line in output:gmatch("[^\r\n]+") do
     if not seen[line] then
       table.insert(results, line)
       seen[line] = true
@@ -961,7 +989,7 @@ function dataform.find_variable_references()
   end
 
   if #results == 0 then
-    utils.notify("No references found for variable: " .. var_path, vim.log.levels.INFO)
+    utils.notify("No references found for " .. label, vim.log.levels.INFO)
     return
   end
 
