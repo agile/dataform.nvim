@@ -8,6 +8,7 @@ dataform.compiled_project_table = {}
 
 local default_config = {
   compile_on_save = true,
+  format_on_save = false,
   formatter_bin = "sqlfluff",
   formatter_options = { "fix", "--force", "-q" },
 }
@@ -882,6 +883,18 @@ function dataform.toggle_compile_on_save()
   dataform.config.compile_on_save = not dataform.config.compile_on_save
   local status = dataform.config.compile_on_save and "enabled" or "disabled"
   utils.notify("Dataform compile on save " .. status .. ".", vim.log.levels.INFO)
+end
+
+function dataform.format_on_save()
+  if dataform.config.format_on_save then
+    dataform.format()
+  end
+end
+
+function dataform.toggle_format_on_save()
+  dataform.config.format_on_save = not dataform.config.format_on_save
+  local status = dataform.config.format_on_save and "enabled" or "disabled"
+  utils.notify("Dataform format on save " .. status .. ".", vim.log.levels.INFO)
 end
 
 function dataform.find_variable_references()
