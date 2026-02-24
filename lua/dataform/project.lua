@@ -465,6 +465,7 @@ function dataform.hover()
 end
 
 local ns = vim.api.nvim_create_namespace("dataform_diagnostics")
+local vt_ns = vim.api.nvim_create_namespace("dataform_virtual_text")
 
 function dataform.set_diagnostics(compiled_json)
   vim.diagnostic.reset(ns)
@@ -670,6 +671,43 @@ function dataform.estimate_tag_cost(tag)
   end
 
   utils.notify(msg, vim.log.levels.INFO)
+end
+
+function dataform.show_dry_run_virtual_text()
+  local all_models = get_all_models()
+  local target_file_path = get_dataform_definitions_file_path()
+  local model = find_model_by_file_path(all_models, target_file_path)
+
+  if not model or not model.query then return end
+
+  local target_name = model.target.database .. "." .. model.target.schema .. "." .. model.target.name
+  local query = ""
+
+  if model.type == "view" then
+    query = "CREATE OR REPLACE VIEW `" .. target_name .. "` AS " .. model.query
+  elseif model.type == "table" then
+    query = "CREATE OR REPLACE TABLE `" .. target_name .. "` AS " .. model.query
+  elseif model.type == "incremental" then
+    query = "CREATE OR REPLACE TABLE `" .. target_name .. "` AS " .. (model.incrementalQuery or model.query)
+  else
+    query = model.query
+  end
+
+  local bq_command = "echo " .. vim.fn.shellescape(query) .. " | bq query --dry_run"
+  -- Use background execution if possible, but for now we'll do it synchronously
+  local status, result = utils.os_execute_with_status(bq_command, false, true)
+
+  if status == 0 then
+    local stats = utils.parse_dry_run_stats(result)
+    if stats then
+      local bufnr = vim.api.nvim_get_current_buf()
+      vim.api.nvim_buf_clear_namespace(bufnr, vt_ns, 0, -1)
+      vim.api.nvim_buf_set_extmark(bufnr, vt_ns, 0, 0, {
+        virt_text = { { "󱓞 " .. stats, "DiagnosticInfo" } },
+        virt_text_pos = "right_align",
+      })
+    end
+  end
 end
 
 function dataform.compile()
@@ -889,6 +927,10 @@ end
 function dataform.compile_on_save()
   if dataform.config.compile_on_save then
     dataform.compile()
+    -- Only run dry run if compilation was successful (we can check compiled_project_table)
+    if dataform.compiled_project_table and not (dataform.compiled_project_table.graphErrors and #dataform.compiled_project_table.graphErrors.compilationErrors > 0) then
+       dataform.show_dry_run_virtual_text()
+    end
   end
 end
 
