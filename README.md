@@ -54,13 +54,13 @@
     require('dataform').setup({
         -- Automatically compile on save (default: true)
         compile_on_save = true,
-        
+
         -- Automatically format SQL blocks on save (default: false)
         format_on_save = false,
 
         -- Layout for compiled SQL previews: 'vsplit' or 'float' (default: 'vsplit')
         preview_style = "vsplit",
-        
+
         -- Formatter configuration
         formatter_bin = "sqlfluff",
         formatter_options = { "fix", "--force", "-q" },
@@ -93,9 +93,9 @@
 This plugin uses `mini.test` for its test suite. To run the tests locally:
 
 1. Clone the repository.
-2. Run `make test`. (The test runner will automatically download dependencies to `tests/.deps/`).
+2. Install pre-commit (`brew install pre-commit` or [see installation notes](https://pre-commit.com/#installation)) and install pre-commit hooks: `pre-commit install`
+3. Run `make test`. (The test runner will automatically download dependencies to `tests/.deps/`).
 
-The suite includes 27+ cases covering structural parsing, generalized navigation, and background dry-runs.
 
 ## 🌳 Tree-sitter Support
 
