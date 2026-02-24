@@ -35,7 +35,7 @@
 
 - [Dataform CLI](https://cloud.google.com/dataform/docs/use-dataform-cli) (`npm i -g @dataform/cli`)
 - [BigQuery CLI Tool](https://cloud.google.com/bigquery/docs/bq-command-line-tool) (`gcloud components install bq`)
-- (Optional) [sqlfluff](https://sqlfluff.com/) for SQL formatting.
+- (Optional) [sqlfluff](https://sqlfluff.com/), or tool of your choice, for SQL formatting and linting.
 
 ### Optional Enhancements
 
@@ -45,74 +45,51 @@
 
 ## 🧪 Installation & Configuration
 
-### Simple Setup (Recommended)
-For most users, simply calling `setup` is enough. This works on all Neovim versions and automatically registers the Dataform pseudo-LSP with sensible defaults.
+If you are on Neovim 0.11 or later, you can treat Dataform exactly like any other Language Server using the new native configuration system.
 
 ```lua
 -- Example with lazy.nvim
 {
-  'magal1337/dataform.nvim',
+  -- 'magal1337/dataform.nvim',
+  -- until these have been upstreamed
+  'agile/dataform.nvim',
+  branch = 'enhancements',
   dependencies = {
     'rcarriga/nvim-notify',
     'nvim-telescope/telescope.nvim'
   },
-    config = function ()
-      require('dataform').setup({
-          -- Automatically compile on save (default: true)
-          compile_on_save = true,
+  config = function ()
+    local df = require('dataform')
 
-          -- Automatically format SQL blocks on save (default: false)
-          format_on_save = false,
+    -- 1. Configure the plugin (showing default values)
+    df.setup({
+        -- Automatically compile on save
+        compile_on_save = true,
 
-          -- Layout for compiled SQL previews: 'vsplit' or 'float' (default: 'vsplit')
-          preview_style = "vsplit",
+        -- Automatically format SQL blocks on save
+        format_on_save = false,
 
-          -- Use tree-sitter for block detection if available (default: true)
-          use_treesitter = true,
+        -- Layout for compiled SQL previews: 'vsplit' or 'float'
+        preview_style = "vsplit",
 
-          -- Enable internal logging (default: false)
-          logging = false,
+        -- Use tree-sitter for block detection if available
+        use_treesitter = true,
 
-          -- Clear log file on startup (default: true)
-          clear_log_on_start = true,
+        -- Enable internal logging
+        logging = false,
 
-          -- Formatter configuration
-          formatter_bin = "sqlfluff", -- (default: 'sqlfluff')
-          formatter_options = { "fix", "--force", "-q" }, -- (default: as shown)
-      })
-    end
-  }
+        -- Clear log file on startup
+        clear_log_on_start = true,
 
-```
+        -- Formatter configuration
+        formatter_bin = "sqlfluff",
+        formatter_options = { "fix", "--force", "-q" },
+    })
 
-### Neovim 0.11+ Setup
-If you are on Neovim 0.11 or later, you can treat Dataform exactly like any other Language Server using the new native configuration system.
-
-```lua
-local df = require('dataform')
-
--- 1. Initialize plugin settings (optional)
-df.setup({ compile_on_save = true })
-
--- 2. Enable the server using the new native API
-vim.lsp.enable('dataform')
-```
-
-### Manual LSP Setup (Advanced / Pre-0.11)
-If you want full manual control over the LSP lifecycle (e.g., custom `on_attach` or `capabilities`), you can retrieve the standard config and start it yourself.
-
-```lua
-local df = require('dataform')
-
-local lsp_config = df.get_lsp_config({
-  on_attach = function(client, bufnr)
-    -- Your standard LSP keybindings here
-  end,
-  capabilities = require('cmp_nvim_lsp').default_capabilities(),
-})
-
--- Start the client manually
-vim.lsp.start(lsp_config)
+    -- 2. Enable the server using the new native API
+    vim.lsp.enable('dataform')
+  end
+}
 ```
 
 ## 🚀 Development & Testing
@@ -125,21 +102,45 @@ This plugin uses `mini.test` for its test suite. To run the tests locally:
 
 ## 🌳 Tree-sitter Support
 
-For the best experience, use the experimental `tree-sitter-dataform` grammar included in this workspace.
+For the best experience, it is highly recommended to use the `tree-sitter-dataform` and `tree-sitter-sql-bigquery` grammars.
+Dataform uses BigQuery as its primary SQL dialect, and the grammar delegates SQL highlighting via injections.
+
+* https://github.com/renzepost/tree-sitter-dataform
+* https://github.com/renzepost/tree-sitter-sql-bigquery
 
 ### Setup with `nvim-treesitter`:
 
+Add both parsers to your Tree-sitter configuration:
+
 ```lua
 local parser_config = require("nvim-treesitter.parsers").get_parser_configs()
+
+-- Dataform Grammar (Core structure)
 parser_config.dataform = {
   install_info = {
-    url = "https://github.com/renzepost/tree-sitter-dataform",
+    -- url = "https://github.com/renzepost/tree-sitter-dataform",
+    -- branch = "main",
+    -- Until other changes have been upstreamed
+    url = "https://github.com/agile/tree-sitter-dataform",
+    branch = "enhancements",
     files = { "src/parser.c" },
-    branch = "main",
   },
   filetype = "sqlx",
 }
+
+-- BigQuery Grammar (SQL block highlighting)
+parser_config.bigquery = {
+  install_info = {
+    url = "https://github.com/renzepost/tree-sitter-sql-bigquery",
+    files = { "src/parser.c" },
+    branch = "main",
+  },
+  filetype = "bigquery",
+}
 ```
+
+After adding the configuration, install them:
+`:TSInstall dataform bigquery`
 
 ## 🏰 How to contribute
 Check our [Contributing Guide](https://github.com/magal1337/dataform.nvim/blob/main/CONTRIBUTING.md)
