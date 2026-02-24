@@ -400,6 +400,8 @@ function dataform.get_lsp_config(user_lsp_opts)
         elseif method == "workspace/executeCommand" then
           if params.command == "dataform.create_declaration" then dataform.create_declaration(unpack(params.arguments))
           elseif params.command == "dataform.add_column_description" then dataform.add_column_description(unpack(params.arguments))
+          elseif params.command == "dataform.fix_semicolon" then dataform.fix_semicolon(unpack(params.arguments))
+          elseif params.command == "dataform.add_default_config" then dataform.add_default_config(unpack(params.arguments))
           elseif params.command == "dataform.show_tag_dependency_tree" then dataform.show_tag_dependency_tree(unpack(params.arguments))
           elseif params.command == "dataform.compile" then dataform.compile()
           elseif params.command == "dataform.preview" then dataform.get_compiled_sql_job()
@@ -1677,6 +1679,29 @@ function dataform.create_declaration(schema, name)
   end
 end
 
+function dataform.fix_semicolon(bufnr, lnum)
+  local line = vim.api.nvim_buf_get_lines(bufnr, lnum, lnum + 1, false)[1]
+  if line then
+    local new_line = line:gsub(";%s*$", "")
+    vim.api.nvim_buf_set_lines(bufnr, lnum, lnum + 1, false, { new_line })
+    utils.notify("Removed trailing semicolon.", vim.log.levels.INFO)
+  end
+end
+
+function dataform.add_default_config(bufnr)
+  local blocks = dataform.get_sqlx_blocks()
+  if not blocks.config.exists then
+    local content = [[config {
+  type: "table",
+  description: "New table."
+}
+
+]]
+    vim.api.nvim_buf_set_lines(bufnr, 0, 0, false, vim.split(content, "\n"))
+    utils.notify("Added default config block.", vim.log.levels.INFO)
+  end
+end
+
 function dataform.add_column_description(col_name)
   local blocks = dataform.get_sqlx_blocks()
   if not blocks.config.exists then
@@ -1727,6 +1752,26 @@ function dataform.get_code_actions()
   local context = dataform.get_context_at_cursor()
   local lsp_actions = {}
   local all_models = get_all_models()
+  local bufnr = vim.api.nvim_get_current_buf()
+
+  -- 1. Check current diagnostics for fixable errors
+  local diagnostics = vim.diagnostic.get(bufnr, { namespace = ns })
+  for _, d in ipairs(diagnostics) do
+    if d.message:find("Actions may only include .* if they create a dataset") then
+      table.insert(lsp_actions, {
+        title = "Add default config block",
+        kind = "quickfix",
+        command = { command = "dataform.add_default_config", arguments = { bufnr } }
+      })
+    end
+    if d.message:find("semi%-colon at the end of the query") or d.message:find("Unexpected ';'") then
+      table.insert(lsp_actions, {
+        title = "Remove trailing semicolon",
+        kind = "quickfix",
+        command = { command = "dataform.fix_semicolon", arguments = { bufnr, d.lnum } }
+      })
+    end
+  end
 
   if context.type == "table" then
     -- ... existing table logic ...

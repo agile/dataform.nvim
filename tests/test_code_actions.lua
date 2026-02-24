@@ -88,4 +88,40 @@ T['code_actions']['offers to document unknown columns'] = function()
   MiniTest.expect.equality(found, true)
 end
 
+T['code_actions']['offers fix for missing config'] = function()
+  local df = _G.reload_dataform()
+  local bufnr = setup_buffer({ 'SELECT 1' })
+
+  -- Mock diagnostic
+  local ns = vim.api.nvim_create_namespace("dataform_diagnostics")
+  vim.diagnostic.set(ns, bufnr, {
+    { message = "Actions may only include pre_operations if they create a dataset", lnum = 0, col = 0 }
+  })
+
+  local actions = df.get_code_actions()
+  local found = false
+  for _, a in ipairs(actions) do
+    if a.title == "Add default config block" then found = true end
+  end
+  MiniTest.expect.equality(found, true)
+end
+
+T['code_actions']['offers fix for trailing semicolon'] = function()
+  local df = _G.reload_dataform()
+  local bufnr = setup_buffer({ 'SELECT 1;' })
+
+  -- Mock diagnostic
+  local ns = vim.api.nvim_create_namespace("dataform_diagnostics")
+  vim.diagnostic.set(ns, bufnr, {
+    { message = "Unexpected ';'", lnum = 0, col = 8 }
+  })
+
+  local actions = df.get_code_actions()
+  local found = false
+  for _, a in ipairs(actions) do
+    if a.title == "Remove trailing semicolon" then found = true end
+  end
+  MiniTest.expect.equality(found, true)
+end
+
 return T
