@@ -154,6 +154,26 @@ T['actions']['hover() handles various symbols'] = function()
   df.hover()
   MiniTest.expect.equality(captured_lines[1] ~= nil and captured_lines[1]:find("JS Symbol: docs.columns.my_col") ~= nil, true)
 
+  -- 4. 2-arg ref hover
+  df.compiled_project_table = {
+    tables = {
+      {
+        target = { database = "db", schema = "my_schema", name = "my_table" },
+        fileName = "definitions/my_table.sqlx",
+        type = "table"
+      }
+    }
+  }
+  setup_buffer({ 'SELECT ${ref("my_schema", "my_table")}' }, { 1, 15 }) -- On "my_schema"
+  df.hover()
+  MiniTest.expect.equality(captured_lines[1]:find("my_schema.my_table") ~= nil, true)
+
+  -- 5. Tag hover
+  captured_lines = {}
+  setup_buffer({ 'config { tags: ["daily"] }' }, { 1, 18 }) -- On "daily"
+  df.hover()
+  MiniTest.expect.equality(captured_lines[1]:find("Tag: daily") ~= nil, true)
+
   os.remove('includes/docs.js')
   os.remove('includes')
 

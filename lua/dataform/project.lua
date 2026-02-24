@@ -619,7 +619,8 @@ function dataform.hover()
   -- 6. Tag hover
   if #hover_content == 0 then
     -- Check if word is inside tags: [ "tag" ]
-    if current_line:find('tags%s*:%s*%[[^%]]*["\']' .. lua_escaped_word .. '["\']') then
+    local lua_escaped_word = word:gsub("([%(%)%.%%%+%-%*%?%[%]%^%$])", "%%%1")
+    if context.current_line:find('tags%s*:%s*%[[^%]]*["\']' .. lua_escaped_word .. '["\']') then
       table.insert(hover_content, "# Tag: " .. word)
       table.insert(hover_content, "---")
       table.insert(hover_content, "This is a Dataform tag. Use `:DataformCodeAction` to view the dependency tree for all models with this tag.")
