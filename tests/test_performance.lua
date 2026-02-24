@@ -77,4 +77,34 @@ T['performance']['compile skips job when hash matches'] = function()
   utils.execute_job = old_job
 end
 
+T['performance']['compile includes global dataform_args'] = function()
+  local df = _G.reload_dataform()
+  local utils = require('dataform.utils')
+
+  df.setup({ dataform_args = { "--custom-flag", "custom-value" } })
+
+  local captured_args = {}
+  local old_job = utils.execute_job
+  utils.execute_job = function(cmd, args, opts)
+    captured_args = args
+    return { shutdown = function() end }
+  end
+
+  setup_buffer({ 'config { type: "v" }', 'SELECT 1' })
+  df.compile()
+
+  local found_flag = false
+  local found_value = false
+  for _, arg in ipairs(captured_args) do
+    if arg == "--custom-flag" then found_flag = true end
+    if arg == "custom-value" then found_value = true end
+  end
+
+  MiniTest.expect.equality(found_flag, true)
+  MiniTest.expect.equality(found_value, true)
+
+  -- Cleanup
+  utils.execute_job = old_job
+end
+
 return T

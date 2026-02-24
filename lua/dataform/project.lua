@@ -11,6 +11,8 @@ dataform.structural_hashes = {}
 ---@field compile_on_save boolean? (default: true) Automatically compile Dataform project on saving a .sqlx file.
 
 local default_config = {
+  dataform_bin = "dataform",   -- Path to dataform binary or wrapper script
+  dataform_args = {},          -- Global arguments for dataform (e.g. {"--schema-suffix", "dev"})
   compile_on_save = true,
   format_on_save = false,
   lint_on_save = false,
@@ -31,6 +33,21 @@ local function is_treesitter_available()
   if not dataform.config.use_treesitter then return false end
   local ok, _ = pcall(vim.treesitter.get_parser, 0, "dataform")
   return ok
+end
+
+local function get_df_args(subcommand, extra_args)
+  local args = { subcommand }
+  -- Add global args from config
+  for _, arg in ipairs(dataform.config.dataform_args or {}) do
+    table.insert(args, arg)
+  end
+  -- Add subcommand-specific args
+  if extra_args then
+    for _, arg in ipairs(extra_args) do
+      table.insert(args, arg)
+    end
+  end
+  return args
 end
 
 local function get_blocks_via_treesitter()
@@ -294,9 +311,17 @@ function dataform.get_lsp_config(user_lsp_opts)
           if context.type == "table" then
             for _, node in pairs(all_models) do
               if node.target.name == context.table_name and (not context.schema or node.target.schema == context.schema) then
-                table.insert(hover_content, "# " .. node.target.database .. "." .. node.target.schema .. "." .. node.target.name)
+                local target = node.target
+                local canonical = node.canonicalTarget
+
+                table.insert(hover_content, "# " .. target.database .. "." .. target.schema .. "." .. target.name)
                 table.insert(hover_content, "---")
                 table.insert(hover_content, "**Type:** " .. (node.type or "table"))
+
+                if canonical and (canonical.schema ~= target.schema or canonical.database ~= target.database or canonical.name ~= target.name) then
+                  table.insert(hover_content, "**Canonical Target:** `" .. (canonical.database or "") .. "." .. (canonical.schema or "") .. "." .. (canonical.name or "") .. "`")
+                end
+
                 table.insert(hover_content, "**File:** " .. node.fileName)
                 if node.actionDescriptor and node.actionDescriptor.description then
                    table.insert(hover_content, "")
@@ -489,7 +514,7 @@ function dataform.set_dataform_workdir_project_path()
   })
 
   -- Log versions for environment check
-  utils.os_execute_with_status("dataform --version", false, true)
+  utils.os_execute_with_status(dataform.config.dataform_bin .. " --version", false, true)
   utils.os_execute_with_status("bq version", false, true)
 
   local is_match = string.match(current_path, "/definitions/.*")
@@ -787,9 +812,17 @@ function dataform.hover()
     local found = false
     for _, node in pairs(all_models) do
       if node.target.name == context.table_name and (not context.schema or node.target.schema == context.schema) then
-        table.insert(hover_content, "# " .. node.target.database .. "." .. node.target.schema .. "." .. node.target.name)
+        local target = node.target
+        local canonical = node.canonicalTarget
+
+        table.insert(hover_content, "# " .. target.database .. "." .. target.schema .. "." .. target.name)
         table.insert(hover_content, "---")
         table.insert(hover_content, "**Type:** " .. (node.type or "table"))
+
+        if canonical and (canonical.schema ~= target.schema or canonical.database ~= target.database or canonical.name ~= target.name) then
+          table.insert(hover_content, "**Canonical Target:** `" .. (canonical.database or "") .. "." .. (canonical.schema or "") .. "." .. (canonical.name or "") .. "`")
+        end
+
         table.insert(hover_content, "**File:** " .. node.fileName)
         if node.actionDescriptor and node.actionDescriptor.description then
            table.insert(hover_content, "")
@@ -1320,10 +1353,12 @@ function dataform.compile(on_success)
     dataform.current_compile_job = nil
   end
 
-  dataform.current_compile_job = utils.execute_job("dataform", { "compile", "--json" }, {
+  local args = get_df_args("compile", { "--json" })
+  dataform.current_compile_job = utils.execute_job(dataform.config.dataform_bin, args, {
     json = true,
     quiet = true,
     callback = function(code, stdout, stderr)
+
       dataform.current_compile_job = nil
 
       local ok, decoded = pcall(vim.fn.json_decode, stdout)
@@ -1396,7 +1431,8 @@ function dataform.get_compiled_sql_job(incremental)
 end
 
 function dataform.run_all()
-  local command = "dataform run"
+  local args = get_df_args("run")
+  local command = dataform.config.dataform_bin .. " " .. table.concat(args, " ")
   local status, content = utils.os_execute_with_status(command)
   if status == 0 then
     return utils.notify(
@@ -1412,7 +1448,8 @@ end
 
 function dataform.run_tag(args)
   local tags = args or ""
-  local command = "dataform run --tags=" .. tags
+  local df_args = get_df_args("run", { "--tags=" .. tags })
+  local command = dataform.config.dataform_bin .. " " .. table.concat(df_args, " ")
   local status, content = utils.os_execute_with_status(command)
   if status == 0 then
     return utils.notify(
@@ -1435,7 +1472,8 @@ function dataform.run_action_job(full_refresh)
 
   if table then
     local action = table.target.database .. "." .. table.target.schema .. "." .. table.target.name
-    local command = "dataform run --full-refresh=" .. tostring(full_refresh) .. " --actions=" .. action
+    local df_args = get_df_args("run", { "--full-refresh=" .. tostring(full_refresh), "--actions=" .. action })
+    local command = dataform.config.dataform_bin .. " " .. table.concat(df_args, " ")
 
     local status, content = utils.os_execute_with_status(command)
 
@@ -1474,7 +1512,8 @@ function dataform.run_assertions_job()
   end
 
   for _, assertion in pairs(target_assertions) do
-    local command = "dataform run " .. "--actions=" .. assertion
+    local df_args = get_df_args("run", { "--actions=" .. assertion })
+    local command = dataform.config.dataform_bin .. " " .. table.concat(df_args, " ")
     local status, content = utils.os_execute_with_status(command)
 
     if status == 0 then

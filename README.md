@@ -64,6 +64,12 @@ If you are on Neovim 0.11 or later, you can treat Dataform exactly like any othe
 
     -- 1. Configure the plugin (showing default values)
     df.setup({
+        -- Path to dataform binary or wrapper script
+        dataform_bin = "dataform",
+
+        -- Global arguments for dataform (e.g. {"--schema-suffix", "dev"})
+        dataform_args = {},
+
         -- Automatically compile on save
         compile_on_save = true,
 
