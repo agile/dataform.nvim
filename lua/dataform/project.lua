@@ -101,17 +101,11 @@ end
 
 local function find_model_by_file_path(all_models, target_file_path)
   if not target_file_path then return nil end
-  local target_abs = vim.fn.fnamemodify(target_file_path, ":p")
-  utils.log("find_model_by_file_path: target_abs=" .. target_abs)
+    local target_abs = vim.fn.fnamemodify(target_file_path, ":p")
+    utils.log("find_model_by_file_path: target_abs=" .. target_abs)
 
-  -- Log a few samples to see the format in the graph
-  if #all_models > 0 then
-    utils.log("find_model_by_file_path: Sample graph fileName[1]=" .. tostring(all_models[1].fileName))
-  end
-
-  for _, model in pairs(all_models) do
-
-    if model.fileName then
+    for _, model in pairs(all_models) do
+      if model.fileName then
       local model_abs = vim.fn.fnamemodify(model.fileName, ":p")
       if model_abs == target_abs then
         utils.log("find_model_by_file_path: MATCH FOUND for " .. model.target.name)
@@ -1254,6 +1248,75 @@ function dataform.toggle_logging()
   dataform.config.logging = not dataform.config.logging
   local status = dataform.config.logging and "enabled" or "disabled"
   utils.notify("Dataform logging " .. status .. ".", vim.log.levels.INFO)
+end
+
+function dataform.create_declaration(schema, name)
+  local file_path = "definitions/sources/" .. (schema or "external") .. "/" .. name .. ".sqlx"
+  local dir_path = vim.fn.fnamemodify(file_path, ":h")
+
+  if vim.fn.isdirectory(dir_path) == 0 then
+    vim.fn.mkdir(dir_path, "p")
+  end
+
+  if vim.fn.filereadable(file_path) == 1 then
+    utils.notify("Declaration file already exists: " .. file_path, vim.log.levels.WARN)
+    return utils.open_file(file_path)
+  end
+
+  local content = string.format([[config {
+  type: "declaration",
+  database: "YOUR_DATABASE",
+  schema: "%s",
+  name: "%s",
+  description: "External table declaration."
+}
+]], schema or "YOUR_SCHEMA", name)
+
+  local f = io.open(file_path, "w")
+  if f then
+    f:write(content)
+    f:close()
+    utils.notify("Created declaration: " .. file_path, vim.log.levels.INFO)
+    utils.open_file(file_path)
+  end
+end
+
+function dataform.code_action()
+  local context = dataform.get_context_at_cursor()
+  local actions = {}
+
+  if context.type == "table" then
+    -- Check if table exists in graph
+    local all_models = get_all_models()
+    local found = false
+    for _, node in pairs(all_models) do
+      if node.target.name == context.table_name and (not context.schema or node.target.schema == context.schema) then
+        found = true
+        break
+      end
+    end
+
+    if not found then
+      table.insert(actions, {
+        title = "Create declaration for '" .. context.table_name .. "'",
+        handler = function() dataform.create_declaration(context.schema, context.table_name) end
+      })
+    end
+  end
+
+  if #actions == 0 then
+    utils.notify("No code actions available at cursor.", vim.log.levels.INFO)
+    return
+  end
+
+  vim.ui.select(actions, {
+    prompt = "Dataform Code Actions:",
+    format_item = function(item) return item.title end,
+  }, function(choice)
+    if choice then
+      choice.handler()
+    end
+  end)
 end
 
 function dataform.find_variable_references()

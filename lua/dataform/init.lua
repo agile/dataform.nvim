@@ -29,6 +29,7 @@ M.show_dependency_tree = dataform.show_dependency_tree
 M.show_dry_run_virtual_text = dataform.show_dry_run_virtual_text
 M.find_variable_references = dataform.find_variable_references
 M.find_references = dataform.find_variable_references
+M.code_action = dataform.code_action
 M.hover = dataform.hover
 M.show_signature_help = require("dataform.signatures").show_signature_help
 M.clear_diagnostics = dataform.clear_diagnostics
