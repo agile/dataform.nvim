@@ -10,21 +10,24 @@
 ## 🪄 Features
 
 - **Project Compilation**: Automatically compiles Dataform project on first open or on save.
-- **Enhanced Navigation**: Robust "Go to Definition" for:
+- **Generalized Navigation**: Robust "Go to Definition" and "Find References" for:
     - `${ref()}` and `${resolve()}` (including multi-line calls).
     - JavaScript variables and functions in `js { ... }` blocks.
     - External JavaScript modules in the `includes/` directory.
+    - Project Variables defined in `workflow_settings.yaml`.
     - SQL Common Table Expressions (CTEs) in the current file.
-- **Readable Dry-Run Stats**: Preview compiled SQL with integrated BigQuery dry-run statistics (bytes processed and estimated cost).
+- **Signature Hints**: Proactive parameter help while typing `ref(`, `resolve(`, or `config {`. Supports dynamic signature extraction for your custom JavaScript functions!
+- **Inline Virtual Text**: Automatically displays BigQuery dry-run cost and bytes at the top of your file after every successful save.
+- **Floating Window Previews**: View compiled SQL in a vertical split or a centered floating window for a non-disruptive workflow.
 - **Intelligent Autocompletion**:
     - Dataform Action names (Models/Declarations) within `ref()` or `resolve()`.
     - **Column Names**: Metadata-aware completion for columns documented in your project.
     - Supports both `nvim-cmp` and `blink.cmp`.
-- **Metadata Hovers**: Use `:DataformHover` to see table documentation, column descriptions, and Dataform config keyword help.
-- **Inline Diagnostics**: Compilation errors from `dataform compile` are mapped directly to buffers using Neovim's diagnostic API.
-- **Configurable Formatting**: Format SQL blocks using `sqlfluff` or any custom formatter.
+- **Metadata Hovers**: See table documentation, column descriptions, and Dataform config keyword help. Now includes signature information for JavaScript functions.
+- **Inline Diagnostics**: Compilation errors from `dataform compile` are mapped directly to buffers.
+- **Configurable Formatting**: Format SQL blocks using `sqlfluff` on command or automatically on save.
 - **Action Runner**: Run specific models, tags, or the entire project directly from Neovim.
-- **Dependency Finder**: Smart dependencies/dependents finder using `telescope.nvim` or `vim.ui.select`.
+- **Dependency Finder**: Smart dependencies/dependents finder and navigable dependency trees.
 
 ## 📜 Requirements
 
@@ -39,8 +42,6 @@
 
 ## 🧪 Installation & Configuration
 
-Use your favorite plugin manager to install it.
-
 ```lua
 -- Example with lazy.nvim
 {
@@ -51,10 +52,16 @@ Use your favorite plugin manager to install it.
   },
   config = function ()
     require('dataform').setup({
-        -- refresh dataform metadata on each save (default: true)
+        -- Automatically compile on save (default: true)
         compile_on_save = true,
         
-        -- Formatter configuration (defaults shown)
+        -- Automatically format SQL blocks on save (default: false)
+        format_on_save = false,
+
+        -- Layout for compiled SQL previews: 'vsplit' or 'float' (default: 'vsplit')
+        preview_style = "vsplit",
+        
+        -- Formatter configuration
         formatter_bin = "sqlfluff",
         formatter_options = { "fix", "--force", "-q" },
     })
@@ -62,74 +69,45 @@ Use your favorite plugin manager to install it.
 }
 ```
 
-## 🚀 Completions
-
-The plugin provides completion sources for `nvim-cmp` and `blink.cmp`. It automatically switches between Action names (inside strings) and Column names (in SQL body).
-
-#### Example Setup for `nvim-cmp`
-```lua
-local cmp = require('cmp')
-cmp.setup.filetype('sqlx', {
-  sources = vim.fn.extend(
-    { { name = 'dataform_actions' } },
-    cmp.get_config().sources
-  )
-})
-```
-
-#### Example Setup for `blink.cmp`
-```lua
-blink.setup({
-  sources = {
-    providers = {
-      dataform = {
-        name = "Dataform",
-        module = "dataform.completion.blink",
-      },
-    },
-    per_filetype = {
-      sqlx = { 'dataform', 'lsp', 'path', 'snippets', 'buffer' }
-    },
-  },
-})
-```
-
 ## 🌀 Commands
 
 | Command | Action |
 |---|---|
-|`:DataformCompileFull` | Compile current model to SQL with syntax highlighting and dry-run stats in a vertical split. |
-|`:DataformCompileIncremental` | Same as above but with the `incremental` flag enabled. |
-|`:DataformGoToRef` | Jump to definition of the word under cursor (ref, JS var, CTE). |
-|`:DataformHover` | Show documentation for the table, column, or config keyword under cursor. |
-|`:DataformFormat` | Format the SQL block using the configured formatter. |
-|`:DataformClearDiagnostics` | Clear all Dataform compilation diagnostics. |
+|`:DataformCompileFull` | Preview compiled SQL with dry-run stats (respects `preview_style`). |
+|`:DataformGoToRef` | Jump to definition of symbol under cursor (Table, JS var, Project Var, CTE). |
+|`:DataformHover` | Show documentation/metadata for symbol under cursor. |
+|`:DataformFindReferences`| Find all usages of the table, variable, or function under cursor. |
+|`:DataformSignatureHelp`| Manually trigger the signature hint window. |
+|`:DataformShowDryRun`| Refresh the inline dry-run virtual text. |
+|`:DataformToggleCompileOnSave`| Toggle automatic compilation. |
+|`:DataformToggleFormatOnSave`| Toggle automatic formatting. |
+|`:DataformTogglePreviewStyle`| Switch between 'vsplit' and 'float' for previews. |
+|`:DataformFormat` | Manually format the SQL block. |
+|`:DataformShowDependencyTree`| Open a buffer showing the full dependency tree. |
 |`:DataformRunAction` | Run the current model in BigQuery. |
 |`:DataformRunTag <tag>` | Run actions associated with a specific tag. |
-|`:DataformEstimateTagCost <tag>` | Estimate the BigQuery cost of running all actions for a specific tag. |
 |`:DataformRunAll` | Run the entire Dataform project. |
-|`:DataformFindDependencies`| Open a finder with all dependencies for the current model. |
-|`:DataformFindDependents`| Open a finder with all dependents for the current model. |
+
+## 🚀 Development & Testing
+
+This plugin uses `mini.test` for its test suite. To run the tests locally:
+
+1. Clone the repository.
+2. Run `make test`. (The test runner will automatically download dependencies to `tests/.deps/`).
+
+The suite includes 27+ cases covering structural parsing, generalized navigation, and background dry-runs.
 
 ## 🌳 Tree-sitter Support
 
-For the best experience, it is highly recommended to use the experimental `tree-sitter-dataform` grammar included in this workspace.
-
-### How it enhances the experience:
-- **Superior Syntax Highlighting**: Precisely identifies BigQuery SQL keywords, types, and functions.
-- **Multi-modal Support**: Corrects syntax highlighting for JavaScript within `js { ... }` and `config { ... }` blocks via injections.
-- **Interpolation Awareness**: Properly handles `${ ... }` syntax within SQL blocks.
-- **Improved Indentation**: Provides more consistent and logical indentation for complex `.sqlx` files.
+For the best experience, use the experimental `tree-sitter-dataform` grammar included in this workspace.
 
 ### Setup with `nvim-treesitter`:
-
-1.  Add the parser to your Tree-sitter configuration:
 
 ```lua
 local parser_config = require("nvim-treesitter.parsers").get_parser_configs()
 parser_config.dataform = {
   install_info = {
-    url = "https://github.com/renzepost/tree-sitter-dataform", -- Or local path to tree-sitter-dataform
+    url = "https://github.com/renzepost/tree-sitter-dataform",
     files = { "src/parser.c" },
     branch = "main",
   },
@@ -137,11 +115,8 @@ parser_config.dataform = {
 }
 ```
 
-2.  Install the parser: `:TSInstall dataform`
-3.  Ensure you have the query files (`highlights.scm`, `injections.scm`, etc.) in your Neovim configuration path (usually `~/.config/nvim/queries/dataform/`).
-
 ## 🏰 How to contribute
-To know more on how to contribute please check our [Contributing Guide](https://github.com/magal1337/dataform.nvim/blob/main/CONTRIBUTING.md)
+Check our [Contributing Guide](https://github.com/magal1337/dataform.nvim/blob/main/CONTRIBUTING.md)
 
 ## 🙏 Thanks adventurer 🧙‍♀️
 Like this Plugin? Star it on [GitHub](https://github.com/magal1337/dataform.nvim)
