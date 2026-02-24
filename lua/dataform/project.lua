@@ -441,6 +441,20 @@ function dataform.hover()
     end
   end
 
+  -- 5. JS Function hover
+  if #hover_content == 0 and context.type == "function" then
+    local sig = require("dataform.signatures").get_signature_for_name(word)
+    if sig then
+      table.insert(hover_content, "# Function: " .. word)
+      table.insert(hover_content, "---")
+      table.insert(hover_content, "**Signature:** `" .. word .. "(" .. table.concat(sig.params, ", ") .. ")`")
+      if sig.doc and sig.doc ~= "" then
+        table.insert(hover_content, "")
+        table.insert(hover_content, sig.doc)
+      end
+    end
+  end
+
   if #hover_content > 0 then
     vim.lsp.util.open_floating_preview(hover_content, "markdown", {
       border = "rounded",

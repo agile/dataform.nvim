@@ -21,7 +21,9 @@ local df_signatures = {
   }
 }
 
-local function find_custom_signature(name)
+function signatures.get_signature_for_name(name)
+  if df_signatures[name] then return df_signatures[name] end
+
   local project = require('dataform.project')
   local utils = require('dataform.utils')
   local lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
@@ -98,7 +100,7 @@ function signatures.get_signature_at_cursor()
   end
 
   if func_name then
-    local sig = df_signatures[func_name] or find_custom_signature(func_name)
+    local sig = signatures.get_signature_for_name(func_name)
     if not sig then return nil end
 
     local active_param = 0

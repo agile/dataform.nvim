@@ -50,4 +50,58 @@ T['get_context_at_cursor()']['handles dots in words'] = function()
   MiniTest.expect.equality(context.word, 'constants.TAX_RATE')
 end
 
+T['actions'] = MiniTest.new_set()
+
+T['actions']['go_to_ref() handles local js function'] = function()
+  setup_buffer({
+    'js {',
+    '  function myLocalFunc() {}',
+    '}',
+    'SELECT ${myLocalFunc()}'
+  }, { 4, 12 })
+
+  -- Mock open_file to avoid actually opening a file
+  local old_open = require('dataform.utils').open_file
+  require('dataform.utils').open_file = function() end
+
+  require('dataform.project').go_to_ref()
+
+  local cursor = vim.api.nvim_win_get_cursor(0)
+  MiniTest.expect.equality(cursor[1], 2) -- Should move to line 2
+
+  require('dataform.utils').open_file = old_open
+end
+
+T['actions']['hover() handles js function'] = function()
+  local df = require('dataform.project')
+  df.compiled_project_table = {
+    tables = {
+      {
+        target = { database = "db", schema = "s", name = "my_table" },
+        fileName = "definitions/my_table.sqlx",
+        type = "table"
+      }
+    }
+  }
+  setup_buffer({ 'SELECT ${ref("my_table")}' }, { 1, 15 })
+
+  -- Mock open_floating_preview
+  local captured_lines = {}
+  local old_preview = vim.lsp.util.open_floating_preview
+  vim.lsp.util.open_floating_preview = function(lines) captured_lines = lines end
+
+  require('dataform.project').hover()
+  MiniTest.expect.equality(captured_lines[1]:find("my_table") ~= nil, true)
+
+  -- Test JS function hover
+  captured_lines = {}
+  setup_buffer({ 'js { function test() {} }', 'SELECT ${test( ' }, { 2, 12 })
+
+  require('dataform.project').hover()
+  MiniTest.expect.equality(captured_lines[1] ~= nil and captured_lines[1]:find("Function: test") ~= nil, true)
+
+  vim.lsp.util.open_floating_preview = old_preview
+end
+
 return T
+

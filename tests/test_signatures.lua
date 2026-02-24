@@ -13,7 +13,7 @@ T['signatures'] = MiniTest.new_set()
 T['signatures']['detects ref() start'] = function()
   setup_buffer({ 'SELECT ${ref( ' }, { 1, 13 })
   local help = require('dataform.signatures').get_signature_at_cursor()
-  
+
   MiniTest.expect.equality(help.name, 'ref')
   MiniTest.expect.equality(help.active_param, 0)
 end
@@ -21,7 +21,7 @@ end
 T['signatures']['detects ref() second param'] = function()
   setup_buffer({ 'SELECT ${ref("schema", ' }, { 1, 23 })
   local help = require('dataform.signatures').get_signature_at_cursor()
-  
+
   MiniTest.expect.equality(help.name, 'ref')
   MiniTest.expect.equality(help.active_param, 1)
 end
@@ -29,14 +29,14 @@ end
 T['signatures']['detects resolve()'] = function()
   setup_buffer({ 'SELECT ${resolve( ' }, { 1, 17 })
   local help = require('dataform.signatures').get_signature_at_cursor()
-  
+
   MiniTest.expect.equality(help.name, 'resolve')
 end
 
 T['signatures']['detects config block'] = function()
   setup_buffer({ 'config { ' }, { 1, 9 })
   local help = require('dataform.signatures').get_signature_at_cursor()
-  
+
   MiniTest.expect.equality(help.name, 'config')
 end
 
@@ -47,7 +47,7 @@ T['signatures']['detects local js functions'] = function()
     '}',
     'SELECT ${myLocalFunc( '
   }, { 4, 21 })
-  
+
   local help = require('dataform.signatures').get_signature_at_cursor()
   MiniTest.expect.equality(help.name, 'myLocalFunc')
   MiniTest.expect.equality(help.sig.params[1], 'a')
@@ -62,9 +62,9 @@ T['signatures']['detects includes js functions'] = function()
   f:close()
 
   setup_buffer({ 'SELECT ${utils.myExternalFunc( ' }, { 1, 31 })
-  
+
   local help = require('dataform.signatures').get_signature_at_cursor()
-  
+
   -- Cleanup
   os.remove('includes/utils.js')
   os.remove('includes')
@@ -77,7 +77,7 @@ end
 T['signatures']['ignores unrelated text'] = function()
   setup_buffer({ 'SELECT * FROM table' }, { 1, 10 })
   local help = require('dataform.signatures').get_signature_at_cursor()
-  
+
   MiniTest.expect.equality(help, nil)
 end
 
