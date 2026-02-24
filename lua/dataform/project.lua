@@ -247,10 +247,9 @@ local function get_context_at_cursor()
   end
 
   -- 2. Check for project variables
-  local var_match = current_line:match("dataform%.projectConfig%.vars%.([%w_]+)")
-  if var_match and (word == var_match or current_line:find("dataform.projectConfig.vars." .. lua_escaped_word, 1, true)) then
+  if word:find("dataform%.projectConfig%.vars%.") or current_line:find("dataform%.projectConfig%.vars%." .. lua_escaped_word) then
     context.type = "variable"
-    context.var_name = word:match("([%w_]+)$")
+    context.var_name = word:match("([^%.]+)$")
     return context
   end
 
@@ -931,13 +930,14 @@ function dataform.find_variable_references()
   local lua_escaped_word = word:gsub("([%(%)%.%%%+%-%*%?%[%]%^%$])", "%%%1")
 
   -- 1. Check for project variables: dataform.projectConfig.vars.NAME
-  local var_match = current_line:match("dataform%.projectConfig%.vars%.([%w_]+)")
-  if var_match and (word == var_match or current_line:find("dataform.projectConfig.vars." .. lua_escaped_word, 1, true)) then
+  if word:find("dataform%.projectConfig%.vars%.") or current_line:find("dataform%.projectConfig%.vars%." .. lua_escaped_word) then
     is_var = true
-    table.insert(search_patterns, "dataform\\.projectConfig\\.vars\\." .. escaped_word)
+    local var_name = word:match("([^%.]+)$")
+    local escaped_var = var_name:gsub("%.", "\\.")
+    table.insert(search_patterns, "dataform\\.projectConfig\\.vars\\." .. escaped_var)
     -- Also search in workflow_settings.yaml definition (e.g., "my_var: value")
-    table.insert(search_patterns, "^" .. escaped_word .. ":")
-    label = "variable: " .. word
+    table.insert(search_patterns, "^" .. escaped_var .. ":")
+    label = "variable: " .. var_name
   end
 
   -- 2. Check for ref/resolve (Table references)
