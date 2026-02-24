@@ -13,6 +13,137 @@ local default_config = {
 }
 dataform.config = vim.deepcopy(default_config)
 
+-- Internal Helpers
+
+local function get_dataform_definitions_file_path()
+  local file = utils.get_current_file_path()
+  local pattern = ".*/definitions/"
+  local is_match = string.match(file, pattern)
+  local dataform_path = string.gsub(file, pattern, "")
+
+  if is_match then
+    return "definitions/" .. dataform_path
+  end
+  return utils.notify(
+    "Error: File does not exist inside dataform definitions folder.",
+    vim.log.levels.ERROR
+  )
+end
+
+local function get_all_models()
+  local tables = vim.deepcopy(dataform.compiled_project_table.tables or {})
+  local operations = dataform.compiled_project_table.operations or {}
+  local declarations = dataform.compiled_project_table.declarations or {}
+  local assertions = dataform.compiled_project_table.assertions or {}
+  local all_models = vim.fn.extend(tables, operations)
+  all_models = vim.fn.extend(all_models, declarations)
+
+  return vim.fn.extend(all_models, assertions)
+end
+
+local function find_model_by_file_path(all_models, target_file_path)
+  for _, model in pairs(all_models) do
+    if model.fileName == target_file_path then
+      return model
+    end
+  end
+  return nil
+end
+
+local function find_file_name_by_schema_name(all_models, schema, name)
+  for _, model in pairs(all_models) do
+    if model.target.schema == schema and model.target.name == name then
+      return model.fileName
+    end
+  end
+  return nil
+end
+
+function dataform.get_sqlx_blocks()
+  local lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
+  local in_major_block = false
+  local brace_depth = 0
+  local current_block_name = ""
+
+  local blocks = {
+    config = { exists = false, start_line = 0, end_line = 0 },
+    js = { exists = false, start_line = 0, end_line = 0 },
+    pre_operations = {},
+    post_operations = {},
+    sql = { exists = false, start_line = 0, end_line = 0 }
+  }
+
+  local start_line = 0
+
+  for i, line in ipairs(lines) do
+    local trimmed = vim.trim(line)
+    if #trimmed > 0 then
+      local _, open_braces = line:gsub("{", "")
+      local _, closed_braces = line:gsub("}", "")
+      brace_depth = brace_depth + open_braces - closed_braces
+
+      if not in_major_block then
+        if trimmed:find("^config%s*{") then
+          current_block_name = "config"
+          blocks.config.start_line = i
+          in_major_block = true
+          if brace_depth == 0 then
+            blocks.config.end_line = i
+            blocks.config.exists = true
+            in_major_block = false
+          end
+        elseif trimmed:find("^js%s*{") then
+          current_block_name = "js"
+          blocks.js.start_line = i
+          in_major_block = true
+          if brace_depth == 0 then
+            blocks.js.end_line = i
+            blocks.js.exists = true
+            in_major_block = false
+          end
+        elseif trimmed:find("^pre_operations%s*{") then
+          current_block_name = "pre_operations"
+          start_line = i
+          in_major_block = true
+          if brace_depth == 0 then
+            table.insert(blocks.pre_operations, { start_line = i, end_line = i, exists = true })
+            in_major_block = false
+          end
+        elseif trimmed:find("^post_operations%s*{") then
+          current_block_name = "post_operations"
+          start_line = i
+          in_major_block = true
+          if brace_depth == 0 then
+            table.insert(blocks.post_operations, { start_line = i, end_line = i, exists = true })
+            in_major_block = false
+          end
+        else
+          if not blocks.sql.exists then
+            blocks.sql.start_line = i
+            blocks.sql.exists = true
+          end
+          blocks.sql.end_line = i
+        end
+      elseif brace_depth == 0 then
+        if current_block_name == "config" then
+          blocks.config.end_line = i
+          blocks.config.exists = true
+        elseif current_block_name == "js" then
+          blocks.js.end_line = i
+          blocks.js.exists = true
+        elseif current_block_name == "pre_operations" then
+          table.insert(blocks.pre_operations, { start_line = start_line, end_line = i, exists = true })
+        elseif current_block_name == "post_operations" then
+          table.insert(blocks.post_operations, { start_line = start_line, end_line = i, exists = true })
+        end
+        in_major_block = false
+        current_block_name = ""
+      end
+    end
+  end
+  return blocks
+end
+
 ---@param user_config DataformUserConfig?
 function dataform.setup(user_config)
   user_config = user_config or {}
@@ -535,9 +666,9 @@ end
 
 function dataform.compile()
   local command = "dataform compile"
-  local status, content = utils.os_execute_with_status(command .. " --json", true)
+  -- Use quiet=true to avoid the automatic notification from os_execute_with_status
+  local status, content = utils.os_execute_with_status(command .. " --json", true, true)
 
-  -- Even if status != 0, we might have valid JSON with graph errors
   local ok, decoded = pcall(vim.fn.json_decode, content)
   if ok then
     dataform.compiled_project_table = decoded
@@ -546,12 +677,21 @@ function dataform.compile()
     if status == 0 then
       utils.notify("Dataform compiled successfully.", vim.log.levels.INFO)
     else
-      utils.notify("Dataform compiled with errors.", vim.log.levels.WARN)
+      utils.notify("Dataform compiled with errors (see diagnostics).", vim.log.levels.WARN)
     end
   else
-    local _, content_error = utils.os_execute_with_status(command)
+    -- JSON decode failed, likely a hard compilation error
+    local _, content_error = utils.os_execute_with_status(command, false, true)
+
+    -- Truncate very long errors
+    local lines = vim.split(content_error, "\n")
+    local msg = content_error
+    if #lines > 15 then
+       msg = table.concat(vim.list_slice(lines, 1, 15), "\n") .. "\n... (truncated)"
+    end
+
     utils.notify(
-      "Error: Dataform compile failed. \n\n" .. content_error,
+      "Error: Dataform compile failed. \n\n" .. msg,
       vim.log.levels.ERROR
     )
   end
@@ -688,38 +828,15 @@ function dataform.run_assertions_job()
   end
 end
 
-local function get_all_models()
-  local tables = dataform.compiled_project_table.tables or {}
-  local operations = dataform.compiled_project_table.operations or {}
-  local declarations = dataform.compiled_project_table.declarations or {}
-  local all_models = vim.fn.extend(tables, operations)
-
-  return vim.fn.extend(all_models, declarations)
-end
-
-local function find_model_by_file_path(all_models, target_file_path)
-  for _, model in pairs(all_models) do
-    if model.fileName == target_file_path then
-      return model
-    end
-  end
-  return nil
-end
-
-local function find_file_name_by_schema_name(all_models, schema, name)
-  for _, model in pairs(all_models) do
-    if model.target.schema == schema and model.target.name == name then
-      return model.fileName
-    end
-  end
-  return nil
-end
-
 function dataform.find_model_dependents()
   local all_models = get_all_models()
   local target_file_path = get_dataform_definitions_file_path()
   local target_model = find_model_by_file_path(all_models, target_file_path)
   local target_paths = {}
+
+  if not target_model then
+    return utils.custom_picker("Model Dependents", target_paths)
+  end
 
   local schema = target_model.target.schema
   local name = target_model.target.name
@@ -765,91 +882,6 @@ function dataform.compile_on_save()
   if dataform.config.compile_on_save then
     dataform.compile()
   end
-end
-
-function dataform.get_sqlx_blocks()
-  local lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
-  local in_major_block = false
-  local brace_depth = 0
-  local current_block_name = ""
-
-  local blocks = {
-    config = { exists = false, start_line = 0, end_line = 0 },
-    js = { exists = false, start_line = 0, end_line = 0 },
-    pre_operations = {},
-    post_operations = {},
-    sql = { exists = false, start_line = 0, end_line = 0 }
-  }
-
-  local start_line = 0
-
-  for i, line in ipairs(lines) do
-    local trimmed = vim.trim(line)
-    if #trimmed > 0 then
-      local _, open_braces = line:gsub("{", "")
-      local _, closed_braces = line:gsub("}", "")
-      brace_depth = brace_depth + open_braces - closed_braces
-
-      if not in_major_block then
-        if trimmed:find("^config%s*{") then
-          current_block_name = "config"
-          blocks.config.start_line = i
-          in_major_block = true
-          if brace_depth == 0 then
-            blocks.config.end_line = i
-            blocks.config.exists = true
-            in_major_block = false
-          end
-        elseif trimmed:find("^js%s*{") then
-          current_block_name = "js"
-          blocks.js.start_line = i
-          in_major_block = true
-          if brace_depth == 0 then
-            blocks.js.end_line = i
-            blocks.js.exists = true
-            in_major_block = false
-          end
-        elseif trimmed:find("^pre_operations%s*{") then
-          current_block_name = "pre_operations"
-          start_line = i
-          in_major_block = true
-          if brace_depth == 0 then
-            table.insert(blocks.pre_operations, { start_line = i, end_line = i, exists = true })
-            in_major_block = false
-          end
-        elseif trimmed:find("^post_operations%s*{") then
-          current_block_name = "post_operations"
-          start_line = i
-          in_major_block = true
-          if brace_depth == 0 then
-            table.insert(blocks.post_operations, { start_line = i, end_line = i, exists = true })
-            in_major_block = false
-          end
-        else
-          if not blocks.sql.exists then
-            blocks.sql.start_line = i
-            blocks.sql.exists = true
-          end
-          blocks.sql.end_line = i
-        end
-      elseif brace_depth == 0 then
-        if current_block_name == "config" then
-          blocks.config.end_line = i
-          blocks.config.exists = true
-        elseif current_block_name == "js" then
-          blocks.js.end_line = i
-          blocks.js.exists = true
-        elseif current_block_name == "pre_operations" then
-          table.insert(blocks.pre_operations, { start_line = start_line, end_line = i, exists = true })
-        elseif current_block_name == "post_operations" then
-          table.insert(blocks.post_operations, { start_line = start_line, end_line = i, exists = true })
-        end
-        in_major_block = false
-        current_block_name = ""
-      end
-    end
-  end
-  return blocks
 end
 
 return dataform
