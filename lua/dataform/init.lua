@@ -24,6 +24,7 @@ M.show_dependency_tree = dataform.show_dependency_tree
 M.find_variable_references = dataform.find_variable_references
 M.find_references = dataform.find_variable_references
 M.hover = dataform.hover
+M.show_signature_help = require("dataform.signatures").show_signature_help
 M.clear_diagnostics = dataform.clear_diagnostics
 M.format = dataform.format
 M.completion_cmp_source = require("dataform.completion.cmp")
