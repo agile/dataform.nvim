@@ -68,7 +68,91 @@ end
 function M.is_sqlx_js_string_syntax()
   local synID = vim.fn.synID(vim.fn.line("."), vim.fn.col("."), 1)
   local synGroupName = vim.fn.synIDattr(synID, "name")
-  return synGroupName and synGroupName == "sqlxJsString"
+  return synGroupName and (synGroupName == "sqlxJsString" or synGroupName == "sqlxSqlString")
+end
+
+function M.is_sqlx_js_syntax()
+  local synID = vim.fn.synID(vim.fn.line("."), vim.fn.col("."), 1)
+  local synGroupName = vim.fn.synIDattr(synID, "name")
+  -- Check for JS block groups (they usually start with sqlxJs...)
+  return synGroupName and (synGroupName:find("^sqlxJs") ~= nil or synGroupName == "sqlxSqlJsBlock")
+end
+
+function M.js_symbols()
+  local symbols = {}
+  local added = {}
+
+  -- 1. List files in includes/
+  local includes_path = "includes"
+  if vim.fn.isdirectory(includes_path) == 1 then
+    local files = vim.fn.globpath(includes_path, "*.js", false, true)
+    for _, file in ipairs(files) do
+      local module_name = vim.fn.fnamemodify(file, ":t:r")
+      if not added[module_name] then
+        table.insert(symbols, {
+          label = module_name,
+          kind = 9, -- Module
+          detail = "Module in includes/"
+        })
+        added[module_name] = true
+      end
+
+      -- Parse exported functions/constants from the file
+      local f = io.open(file, "r")
+      if f then
+        local content = f:read("*all")
+        f:close()
+
+        -- Very simple regex-based export parsing
+        -- Supports: module.exports = { func1, const2 } or function name()
+        for name in content:gmatch("function%s+([%w_]+)%s*%(") do
+          local full_name = module_name .. "." .. name
+          if not added[full_name] then
+            table.insert(symbols, {
+              label = full_name,
+              kind = 3, -- Function
+              detail = "Function in " .. module_name
+            })
+            added[full_name] = true
+          end
+        end
+        -- Also check for: const name = ...
+        for name in content:gmatch("const%s+([%w_]+)%s*=") do
+          local full_name = module_name .. "." .. name
+          if not added[full_name] then
+            table.insert(symbols, {
+              label = full_name,
+              kind = 6, -- Constant
+              detail = "Constant in " .. module_name
+            })
+            added[full_name] = true
+          end
+        end
+      end
+    end
+  end
+
+  -- 2. Local JS blocks
+  local project = require('dataform.project')
+  local blocks = project.get_sqlx_blocks()
+  if blocks.js.exists then
+    local lines = vim.api.nvim_buf_get_lines(0, blocks.js.start_line - 1, blocks.js.end_line, false)
+    local content = table.concat(lines, "\n")
+    for name in content:gmatch("function%s+([%w_]+)%s*%(") do
+      if not added[name] then
+        table.insert(symbols, { label = name, kind = 3, detail = "Local function" })
+        added[name] = true
+      end
+    end
+    for name in content:gmatch("const%s+([%w_]+)%s*=") do
+      if not added[name] then
+        table.insert(symbols, { label = name, kind = 6, detail = "Local constant" })
+        added[name] = true
+      end
+    end
+  end
+
+  return symbols
 end
 
 function M.trigger_characters()
