@@ -616,6 +616,16 @@ function dataform.hover()
     end
   end
 
+  -- 6. Tag hover
+  if #hover_content == 0 then
+    -- Check if word is inside tags: [ "tag" ]
+    if current_line:find('tags%s*:%s*%[[^%]]*["\']' .. lua_escaped_word .. '["\']') then
+      table.insert(hover_content, "# Tag: " .. word)
+      table.insert(hover_content, "---")
+      table.insert(hover_content, "This is a Dataform tag. Use `:DataformCodeAction` to view the dependency tree for all models with this tag.")
+    end
+  end
+
   if #hover_content > 0 then
     vim.lsp.util.open_floating_preview(hover_content, "markdown", {
       border = "rounded",
@@ -798,21 +808,33 @@ function dataform.format()
   end
 end
 
-function dataform.show_dependency_tree()
+function dataform.show_dependency_tree(models)
   utils.log("show_dependency_tree: triggered")
   local all_models = get_all_models()
-  utils.log("show_dependency_tree: all_models count=" .. #all_models)
-  local target_file_path = get_dataform_definitions_file_path()
-  local target_model = find_model_by_file_path(all_models, target_file_path)
+  local target_models = {}
 
-  if not target_model then
-    utils.notify("Model not found in compiled project.", vim.log.levels.WARN)
+  if models then
+    target_models = models
+  else
+    local target_file_path = get_dataform_definitions_file_path()
+    local target_model = find_model_by_file_path(all_models, target_file_path)
+    if target_model then
+      table.insert(target_models, target_model)
+    end
+  end
+
+  if #target_models == 0 then
+    utils.notify("No models found to build tree.", vim.log.levels.WARN)
     return
   end
 
   local tree_lines = {}
   local line_to_file = {}
-  table.insert(tree_lines, "Dependency Tree for: " .. target_model.target.schema .. "." .. target_model.target.name)
+  local title = #target_models == 1
+    and ("Dependency Tree for: " .. target_models[1].target.schema .. "." .. target_models[1].target.name)
+    or "Scoped Dependency Tree"
+
+  table.insert(tree_lines, title)
   table.insert(tree_lines, string.rep("=", #tree_lines[1]))
   table.insert(tree_lines, "")
   table.insert(tree_lines, "Tip: Press <CR> on a node to jump to file, 'q' to close.")
@@ -851,7 +873,9 @@ function dataform.show_dependency_tree()
     end
   end
 
-  build_tree(target_model, "", true)
+  for i, model in ipairs(target_models) do
+    build_tree(model, "", i == #target_models)
+  end
 
   local keymaps = {
     ['<CR>'] = function()
@@ -865,6 +889,28 @@ function dataform.show_dependency_tree()
   }
 
   utils.open_interactive_buffer(table.concat(tree_lines, "\n"), "dataform_tree", "Dataform Dependencies", keymaps)
+end
+
+function dataform.show_tag_dependency_tree(tag)
+  if not tag or tag == "" then return end
+  local all_models = get_all_models()
+  local filtered = {}
+  for _, model in pairs(all_models) do
+    if model.tags then
+      for _, t in ipairs(model.tags) do
+        if t == tag then
+          table.insert(filtered, model)
+          break
+        end
+      end
+    end
+  end
+
+  if #filtered > 0 then
+    dataform.show_dependency_tree(filtered)
+  else
+    utils.notify("No models found with tag: " .. tag, vim.log.levels.WARN)
+  end
 end
 
 function dataform.estimate_tag_cost(tag)
@@ -1302,6 +1348,15 @@ function dataform.code_action()
         handler = function() dataform.create_declaration(context.schema, context.table_name) end
       })
     end
+  end
+
+  -- Check if on a tag
+  local lua_escaped_word = context.word:gsub("([%(%)%.%%%+%-%*%?%[%]%^%$])", "%%%1")
+  if context.current_line:find('tags%s*:%s*%[[^%]]*["\']' .. lua_escaped_word .. '["\']') then
+    table.insert(actions, {
+      title = "Show dependency tree for tag '" .. context.word .. "'",
+      handler = function() dataform.show_tag_dependency_tree(context.word) end
+    })
   end
 
   if #actions == 0 then
