@@ -43,12 +43,23 @@ end
 T['config']['toggle_preview_style() works'] = function()
   local df = require('dataform.project')
   df.config.preview_style = "vsplit"
-  
+
   df.toggle_preview_style()
   MiniTest.expect.equality(df.config.preview_style, "float")
-  
+
   df.toggle_preview_style()
   MiniTest.expect.equality(df.config.preview_style, "vsplit")
+end
+
+T['config']['toggle_logging() works'] = function()
+  local df = require('dataform.project')
+  df.config.logging = false
+
+  df.toggle_logging()
+  MiniTest.expect.equality(df.config.logging, true)
+
+  df.toggle_logging()
+  MiniTest.expect.equality(df.config.logging, false)
 end
 
 return T

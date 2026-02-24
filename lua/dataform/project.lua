@@ -13,6 +13,8 @@ local default_config = {
   formatter_options = { "fix", "--force", "-q" },
   preview_style = "vsplit", -- Options: 'vsplit', 'float'
   use_treesitter = true,    -- Use tree-sitter for parsing if available
+  logging = false,          -- Enable internal logging
+  clear_log_on_start = true, -- Clear log file on startup
 }
 dataform.config = vim.deepcopy(default_config)
 
@@ -75,9 +77,11 @@ end
 
 local function get_dataform_definitions_file_path()
   local file = utils.get_current_file_path()
+  utils.log("get_dataform_definitions_file_path: current file=" .. file)
   if file:find("/definitions/") then
     return file
   end
+  utils.log("get_dataform_definitions_file_path: FAILED, file not in /definitions/")
   return utils.notify(
     "Error: File does not exist inside dataform definitions folder.",
     vim.log.levels.ERROR
@@ -98,18 +102,26 @@ end
 local function find_model_by_file_path(all_models, target_file_path)
   if not target_file_path then return nil end
   local target_abs = vim.fn.fnamemodify(target_file_path, ":p")
+  utils.log("find_model_by_file_path: target_abs=" .. target_abs)
+
+  -- Log a few samples to see the format in the graph
+  if #all_models > 0 then
+    utils.log("find_model_by_file_path: Sample graph fileName[1]=" .. tostring(all_models[1].fileName))
+  end
 
   for _, model in pairs(all_models) do
+
     if model.fileName then
       local model_abs = vim.fn.fnamemodify(model.fileName, ":p")
       if model_abs == target_abs then
+        utils.log("find_model_by_file_path: MATCH FOUND for " .. model.target.name)
         return model
       end
     end
   end
+  utils.log("find_model_by_file_path: NO MATCH FOUND")
   return nil
 end
-
 local function find_file_name_by_schema_name(all_models, schema, name)
   for _, model in pairs(all_models) do
     if model.target.schema == schema and model.target.name == name then
@@ -220,7 +232,23 @@ function dataform.setup(user_config)
 end
 
 function dataform.set_dataform_workdir_project_path()
+  if dataform.config.clear_log_on_start then
+    utils.clear_log()
+  end
+
   local current_path = utils.get_current_file_path()
+
+  utils.log({
+    event = "setup_workdir",
+    cwd = vim.fn.getcwd(),
+    nvim_dir = vim.fn.expand('%:p:h'),
+    current_file = current_path
+  })
+
+  -- Log versions for environment check
+  utils.os_execute_with_status("dataform --version", false, true)
+  utils.os_execute_with_status("bq version", false, true)
+
   local is_match = string.match(current_path, "/definitions/.*")
 
   if is_match then
@@ -367,8 +395,17 @@ function dataform.get_context_at_cursor()
   -- 4. Check for JS module/dot-notation references (e.g., docs.columns.my_col)
   if word:find(".", 1, true) then
     context.type = "js_module"
-    return context
   end
+
+  utils.log({
+    event = "get_context_at_cursor",
+    word = context.word,
+    type = context.type,
+    table = context.table_name,
+    schema = context.schema,
+    func = context.func_name,
+    var = context.var_name
+  })
 
   return context
 end
@@ -768,7 +805,9 @@ function dataform.format()
 end
 
 function dataform.show_dependency_tree()
+  utils.log("show_dependency_tree: triggered")
   local all_models = get_all_models()
+  utils.log("show_dependency_tree: all_models count=" .. #all_models)
   local target_file_path = get_dataform_definitions_file_path()
   local target_model = find_model_by_file_path(all_models, target_file_path)
 
@@ -949,6 +988,15 @@ function dataform.compile()
   if ok then
     dataform.compiled_project_table = decoded
     dataform.set_diagnostics(decoded)
+
+    utils.log({
+      event = "compilation_summary",
+      tables = #(decoded.tables or {}),
+      declarations = #(decoded.declarations or {}),
+      operations = #(decoded.operations or {}),
+      assertions = #(decoded.assertions or {}),
+      graph_errors = #(decoded.graphErrors and decoded.graphErrors.compilationErrors or {})
+    })
 
     if status == 0 then
       utils.notify("Dataform compiled successfully.", vim.log.levels.INFO)
@@ -1200,6 +1248,12 @@ function dataform.toggle_treesitter()
   dataform.config.use_treesitter = not dataform.config.use_treesitter
   local status = dataform.config.use_treesitter and "enabled" or "disabled"
   utils.notify("Dataform Tree-sitter integration " .. status .. ".", vim.log.levels.INFO)
+end
+
+function dataform.toggle_logging()
+  dataform.config.logging = not dataform.config.logging
+  local status = dataform.config.logging and "enabled" or "disabled"
+  utils.notify("Dataform logging " .. status .. ".", vim.log.levels.INFO)
 end
 
 function dataform.find_variable_references()

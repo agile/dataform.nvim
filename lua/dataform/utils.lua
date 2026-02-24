@@ -11,12 +11,23 @@ end
 function utils.os_execute_with_status(command, json_output, quiet)
   local is_json = json_output or false
   local handle_stdout = is_json and " 2>/dev/null" or " 2>&1"
+
+  utils.log("EXEC: " .. command)
+
   local n = os.tmpname()
   local status = os.execute(command .. " > " .. n .. handle_stdout)
   local f = io.open(n, "r")
   local content = f:read("*all")
   f:close()
   os.remove(n)
+
+  utils.log("EXIT CODE: " .. tostring(status))
+  if status ~= 0 then
+    utils.log("ERROR OUTPUT: " .. (content or "(empty)"))
+  elseif not is_json then
+    -- Log success output for non-json commands (like version checks)
+    utils.log("OUTPUT: " .. (content or "(empty)"))
+  end
 
   if status ~= 0 and not quiet then
     utils.notify("Command failed: " .. command .. "\n" .. content, vim.log.levels.ERROR)
@@ -122,6 +133,7 @@ function utils.custom_picker(prompt_name, custom_file_paths)
 end
 
 function utils.notify(msg, level)
+  utils.log({ event = "notify", message = msg, level = level })
   local notify_fn = vim.notify
   local has_notify_plugin, notify_plugin_fn = pcall(require, 'notify')
   if has_notify_plugin then
@@ -150,6 +162,37 @@ function utils.parse_dry_run_stats(bq_output)
     return string.format("Dry run: %s (~$%.5f)", formatted, cost)
   end
   return nil
+end
+
+function utils.log(msg)
+  local df_ok, df = pcall(require, "dataform.project")
+  if not df_ok or not df.config.logging then return end
+
+  local log_path = vim.fn.stdpath('cache') .. '/dataform.log'
+  local f = io.open(log_path, "a")
+  if f then
+    f:write(os.date("%Y-%m-%d %H:%M:%S") .. " [DEBUG] " .. (type(msg) == "table" and vim.inspect(msg) or tostring(msg)) .. "\n")
+    f:close()
+  end
+end
+
+function utils.open_log()
+  local log_path = vim.fn.stdpath('cache') .. '/dataform.log'
+  if vim.fn.filereadable(log_path) == 1 then
+    vim.cmd("edit " .. log_path)
+  else
+    utils.notify("Log file not found.", vim.log.levels.WARN)
+  end
+end
+
+function utils.clear_log()
+  local log_path = vim.fn.stdpath('cache') .. '/dataform.log'
+  local f = io.open(log_path, "w")
+  if f then
+    f:write("")
+    f:close()
+    utils.notify("Dataform log cleared.", vim.log.levels.INFO)
+  end
 end
 
 return utils
