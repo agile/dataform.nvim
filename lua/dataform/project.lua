@@ -270,13 +270,17 @@ function dataform.get_context_at_cursor()
       _, _, table_name = block_content:find('resolve%(%s*["\']([^"\']+)["\']%s*%)')
     end
 
-    if table_name and (word == table_name or word == schema) then
-      context.type = "table"
-      context.table_name = table_name
-      context.schema = schema
-      return context
+    if table_name then
+      -- If cursor is on the word, or if we are inside the block, default to the table
+      if word == table_name or word == schema or block_content:find(lua_escaped_word, 1, true) then
+        context.type = "table"
+        context.table_name = table_name
+        context.schema = schema
+        return context
+      end
     end
   end
+
   -- 2. Check for project variables
   if word:find("dataform%.projectConfig%.vars%.") or current_line:find("dataform%.projectConfig%.vars%." .. lua_escaped_word) then
     context.type = "variable"
@@ -288,6 +292,12 @@ function dataform.get_context_at_cursor()
   if current_line:find(lua_escaped_word .. "%s*%(") then
     context.type = "function"
     context.func_name = word
+    return context
+  end
+
+  -- 4. Check for JS module/dot-notation references (e.g., docs.columns.my_col)
+  if word:find(".", 1, true) then
+    context.type = "js_module"
     return context
   end
 
@@ -472,15 +482,17 @@ function dataform.hover()
     end
   end
 
-  -- 5. JS Function hover
-  if #hover_content == 0 and context.type == "function" then
+  -- 5. JS Symbol hover (Functions or Modules/Constants)
+  if #hover_content == 0 and (context.type == "function" or context.type == "js_module") then
     local sig = require("dataform.signatures").get_signature_for_name(word)
     if sig then
-      table.insert(hover_content, "# Function: " .. word)
+      table.insert(hover_content, "# JS Symbol: " .. word)
       table.insert(hover_content, "---")
-      table.insert(hover_content, "**Signature:** `" .. word .. "(" .. table.concat(sig.params, ", ") .. ")`")
+      if context.type == "function" then
+        table.insert(hover_content, "**Signature:** `" .. word .. "(" .. table.concat(sig.params, ", ") .. ")`")
+      end
       if sig.doc and sig.doc ~= "" then
-        table.insert(hover_content, "")
+        if context.type == "function" then table.insert(hover_content, "") end
         table.insert(hover_content, sig.doc)
       end
     end
@@ -500,17 +512,31 @@ local vt_ns = vim.api.nvim_create_namespace("dataform_virtual_text")
 
 function dataform.set_diagnostics(compiled_json)
   vim.diagnostic.reset(ns)
-  if not compiled_json or not compiled_json.graphErrors or not compiled_json.graphErrors.compilationErrors then
-    return
+  if not compiled_json then return end
+
+  local compilation_errors = {}
+  if compiled_json.graphErrors and compiled_json.graphErrors.compilationErrors then
+    for _, err in ipairs(compiled_json.graphErrors.compilationErrors) do
+      table.insert(compilation_errors, err)
+    end
   end
 
+  -- Also check top-level compilation errors if they exist
+  if compiled_json.compilationErrors then
+    for _, err in ipairs(compiled_json.compilationErrors) do
+      table.insert(compilation_errors, err)
+    end
+  end
+
+  if #compilation_errors == 0 then return end
+
   local diagnostics_by_file = {}
-  for _, err in ipairs(compiled_json.graphErrors.compilationErrors) do
+  for _, err in ipairs(compilation_errors) do
     if err.fileName then
       local file_diagnostics = diagnostics_by_file[err.fileName] or {}
       table.insert(file_diagnostics, {
-        lnum = 0, -- Dataform CLI often doesn't give line numbers for graph errors
-        col = 0,
+        lnum = (err.lineNumber and err.lineNumber > 0) and (err.lineNumber - 1) or 0,
+        col = (err.columnNumber and err.columnNumber > 0) and (err.columnNumber - 1) or 0,
         severity = vim.diagnostic.severity.ERROR,
         message = err.message,
         source = "Dataform",
@@ -520,16 +546,22 @@ function dataform.set_diagnostics(compiled_json)
   end
 
   for fileName, diagnostics in pairs(diagnostics_by_file) do
-    -- Try to find the buffer for this file
+    -- Robust buffer matching using absolute paths
     local bufnr = -1
+    local abs_fileName = vim.fn.fnamemodify(fileName, ":p")
+
     for _, buf in ipairs(vim.api.nvim_list_bufs()) do
-      if vim.api.nvim_buf_get_name(buf):find(fileName, 1, true) then
-        bufnr = buf
-        break
+      local buf_name = vim.api.nvim_buf_get_name(buf)
+      if buf_name ~= "" then
+        local abs_buf_name = vim.fn.fnamemodify(buf_name, ":p")
+        if abs_buf_name == abs_fileName or abs_buf_name:find(fileName .. "$") then
+          bufnr = buf
+          break
+        end
       end
     end
 
-    if bufnr ~= -1 then
+    if bufnr ~= -1 and vim.api.nvim_buf_is_loaded(bufnr) then
       vim.diagnostic.set(ns, bufnr, diagnostics)
     end
   end

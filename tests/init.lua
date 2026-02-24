@@ -19,3 +19,12 @@ require('mini.test').setup({
     reporter = require('mini.test').gen_reporter.stdout(),
   },
 })
+
+-- Reload helper
+function _G.reload_dataform()
+  package.loaded['dataform.project'] = nil
+  package.loaded['dataform.utils'] = nil
+  package.loaded['dataform.signatures'] = nil
+  package.loaded['dataform.init'] = nil
+  return require('dataform.project')
+end

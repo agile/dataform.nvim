@@ -27,7 +27,7 @@ function signatures.get_signature_for_name(name)
   local project = require('dataform.project')
   local utils = require('dataform.utils')
   local lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
-  
+
   -- Search Patterns for JS functions
   local patterns = {
     "function%s+" .. name .. "%s*%((.-)%)",
@@ -54,26 +54,41 @@ function signatures.get_signature_for_name(name)
   local parts = vim.split(name, "%.")
   if #parts > 1 then
     local module_name = parts[1]
-    local func_name = parts[2]
+    -- The target could be nested (e.g., docs.columns.my_col)
+    -- We'll try to find the last part as the definition name
+    local target_name = parts[#parts]
     local include_path = "includes/" .. module_name .. ".js"
-    
+
     if vim.fn.filereadable(include_path) == 1 then
       local f = io.open(include_path, "r")
       if f then
         local content = f:read("*all")
         f:close()
-        
-        -- Adjust patterns for the submodule function name
+
+        -- Adjust patterns for the target name
         local sub_patterns = {
-          "function%s+" .. func_name .. "%s*%((.-)%)",
-          "const%s+" .. func_name .. "%s*=%s*%((.-)%)%s*=>",
-          func_name .. "%s*:%s*function%s*%((.-)%)"
+          "function%s+" .. target_name .. "%s*%((.-)%)",
+          "const%s+" .. target_name .. "%s*=%s*%((.-)%)%s*=>",
+          "const%s+" .. target_name .. "%s*=%s*function%s*%((.-)%)",
+          target_name .. "%s*:%s*function%s*%((.-)%)",
+          target_name .. "%s*[:=]%s*['\"](.-)['\"]", -- Match simple string constants
+          "const%s+" .. target_name .. "%s*=%s*['\"](.-)['\"]",
+          target_name .. "%s*[:=]%s*(%b{})", -- Match object definitions
         }
-        
+
         for _, pattern in ipairs(sub_patterns) do
           local params = content:match(pattern)
           if params then
-            return { label = name, params = vim.split(params, "%s*,%s*"), doc = "Imported from " .. include_path }
+            local res = { label = name, params = {}, doc = "Imported from " .. include_path }
+            if pattern:find("function") or pattern:find("=>") then
+               res.params = vim.split(params, "%s*,%s*")
+            else
+               -- For constants, show the value as doc if it's short, or just note it
+               if #params < 100 then
+                 res.doc = res.doc .. "\n\n**Value:** " .. params
+               end
+            end
+            return res
           end
         end
       end
@@ -94,7 +109,7 @@ function signatures.get_signature_at_cursor()
   if not func_name then
     func_name = text_before:match("([%w_%.]+)%s*%(.*,%s*$")
   end
-  
+
   if not func_name then
     func_name = text_before:match("([%w_]+)%s*{%s*$")
   end
@@ -130,7 +145,7 @@ function signatures.show_signature_help()
 
     local sig = help.sig
     local label = help.name .. "(" .. table.concat(sig.params, ", ") .. ")"
-    
+
     if sig.alt_params and help.active_param >= 1 then
        label = help.name .. "(" .. table.concat(sig.alt_params, ", ") .. ")"
     end
@@ -140,7 +155,7 @@ function signatures.show_signature_help()
       "---",
       sig.doc
     }
-    
+
     vim.lsp.util.open_floating_preview(lines, "markdown", {
       border = "rounded",
       focusable = false,
@@ -151,4 +166,3 @@ function signatures.show_signature_help()
 end
 
 return signatures
-
