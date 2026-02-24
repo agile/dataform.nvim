@@ -41,6 +41,39 @@ function utils.open_buffer_with_content(content, filetype, title)
   vim.api.nvim_win_set_buf(0, bufnr)
 end
 
+function utils.open_floating_window(content, filetype, title)
+  local bufnr = vim.api.nvim_create_buf(false, true)
+  vim.api.nvim_buf_set_lines(bufnr, 0, -1, true, vim.split(content, "\n"))
+
+  if filetype then
+    vim.api.nvim_buf_set_option(bufnr, 'filetype', filetype)
+  end
+
+  local width = math.floor(vim.o.columns * 0.8)
+  local height = math.floor(vim.o.lines * 0.8)
+  local row = math.floor((vim.o.lines - height) / 2)
+  local col = math.floor((vim.o.columns - width) / 2)
+
+  local win_opts = {
+    relative = "editor",
+    width = width,
+    height = height,
+    row = row,
+    col = col,
+    style = "minimal",
+    border = "rounded",
+    title = title or "Dataform Preview",
+    title_pos = "center",
+  }
+
+  local win = vim.api.nvim_open_win(bufnr, true, win_opts)
+
+  -- Close on 'q'
+  vim.api.nvim_buf_set_keymap(bufnr, 'n', 'q', ':close<CR>', { noremap = true, silent = true })
+
+  return win, bufnr
+end
+
 function utils.custom_picker(prompt_name, custom_file_paths)
   if not custom_file_paths or #custom_file_paths == 0 then return end
 

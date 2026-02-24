@@ -11,6 +11,7 @@ M.compile_on_save = dataform.compile_on_save
 M.toggle_compile_on_save = dataform.toggle_compile_on_save
 M.format_on_save = dataform.format_on_save
 M.toggle_format_on_save = dataform.toggle_format_on_save
+M.toggle_preview_style = dataform.toggle_preview_style
 M.get_compiled_sql_job = dataform.get_compiled_sql_job
 M.go_to_ref = dataform.go_to_ref
 M.run_action_job = dataform.run_action_job

@@ -40,4 +40,15 @@ T['config']['toggle_format_on_save() works'] = function()
   MiniTest.expect.equality(df.config.format_on_save, false)
 end
 
+T['config']['toggle_preview_style() works'] = function()
+  local df = require('dataform.project')
+  df.config.preview_style = "vsplit"
+  
+  df.toggle_preview_style()
+  MiniTest.expect.equality(df.config.preview_style, "float")
+  
+  df.toggle_preview_style()
+  MiniTest.expect.equality(df.config.preview_style, "vsplit")
+end
+
 return T

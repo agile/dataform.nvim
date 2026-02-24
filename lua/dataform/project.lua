@@ -11,6 +11,7 @@ local default_config = {
   format_on_save = false,
   formatter_bin = "sqlfluff",
   formatter_options = { "fix", "--force", "-q" },
+  preview_style = "vsplit", -- Options: 'vsplit', 'float'
 }
 dataform.config = vim.deepcopy(default_config)
 
@@ -773,7 +774,12 @@ function dataform.get_compiled_sql_job(incremental)
               utils.notify(result, vim.log.levels.WARN)
             end
 
-            return utils.open_buffer_with_content(header .. composite_query, "sql", "Dataform Preview")
+            local final_content = header .. composite_query
+            if dataform.config.preview_style == "float" then
+              return utils.open_floating_window(final_content, "sql", "Dataform Preview")
+            else
+              return utils.open_buffer_with_content(final_content, "sql", "Dataform Preview")
+            end
 
     end
   end
@@ -950,6 +956,15 @@ function dataform.toggle_format_on_save()
   dataform.config.format_on_save = not dataform.config.format_on_save
   local status = dataform.config.format_on_save and "enabled" or "disabled"
   utils.notify("Dataform format on save " .. status .. ".", vim.log.levels.INFO)
+end
+
+function dataform.toggle_preview_style()
+  if dataform.config.preview_style == "float" then
+    dataform.config.preview_style = "vsplit"
+  else
+    dataform.config.preview_style = "float"
+  end
+  utils.notify("Dataform preview style set to: " .. dataform.config.preview_style, vim.log.levels.INFO)
 end
 
 function dataform.find_variable_references()

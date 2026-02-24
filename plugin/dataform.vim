@@ -38,6 +38,7 @@ augroup DataformSignatures
 augroup END
 
 command! -nargs=0 DataformSignatureHelp lua require('dataform').show_signature_help()
+command! -nargs=0 DataformTogglePreviewStyle lua require('dataform').toggle_preview_style()
 command! -nargs=0 DataformToggleFormatOnSave lua require('dataform').toggle_format_on_save()
 command! -nargs=0 DataformToggleCompileOnSave lua require('dataform').toggle_compile_on_save()
 command! -nargs=0 DataformCompileFull lua require('dataform').get_compiled_sql_job()
