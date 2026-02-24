@@ -12,10 +12,66 @@ local default_config = {
   formatter_bin = "sqlfluff",
   formatter_options = { "fix", "--force", "-q" },
   preview_style = "vsplit", -- Options: 'vsplit', 'float'
+  use_treesitter = true,    -- Use tree-sitter for parsing if available
 }
 dataform.config = vim.deepcopy(default_config)
 
 -- Internal Helpers
+
+local function is_treesitter_available()
+  if not dataform.config.use_treesitter then return false end
+  local ok, _ = pcall(vim.treesitter.get_parser, 0, "dataform")
+  return ok
+end
+
+local function get_blocks_via_treesitter()
+  local parser = vim.treesitter.get_parser(0, "dataform")
+  local tree = parser:parse()[1]
+  local root = tree:root()
+
+  local blocks = {
+    config = { exists = false, start_line = 0, end_line = 0 },
+    js = { exists = false, start_line = 0, end_line = 0 },
+    pre_operations = {},
+    post_operations = {},
+    sql = { exists = false, start_line = 0, end_line = 0 }
+  }
+
+  local query = vim.treesitter.query.parse("dataform", [[
+    (config_block) @config
+    (js_block) @js
+    (pre_operations_block) @pre_ops
+    (post_operations_block) @post_ops
+    (sql_block) @sql
+  ]])
+
+  for id, node in query:iter_captures(root, 0) do
+    local name = query.captures[id]
+    local start_row, _, end_row, _ = node:range()
+    -- range() is 0-indexed, but our plugin uses 1-indexed for lines
+    local s = start_row + 1
+    local e = end_row + 1
+
+    if name == "config" then
+      blocks.config = { exists = true, start_line = s, end_line = e }
+    elseif name == "js" then
+      blocks.js = { exists = true, start_line = s, end_line = e }
+    elseif name == "pre_ops" then
+      table.insert(blocks.pre_operations, { exists = true, start_line = s, end_line = e })
+    elseif name == "post_ops" then
+      table.insert(blocks.post_operations, { exists = true, start_line = s, end_line = e })
+    elseif name == "sql" then
+      if not blocks.sql.exists then
+        blocks.sql = { exists = true, start_line = s, end_line = e }
+      else
+        -- Update end_line for subsequent SQL chunks if necessary
+        blocks.sql.end_line = e
+      end
+    end
+  end
+
+  return blocks
+end
 
 local function get_dataform_definitions_file_path()
   local file = utils.get_current_file_path()
@@ -62,6 +118,11 @@ local function find_file_name_by_schema_name(all_models, schema, name)
 end
 
 function dataform.get_sqlx_blocks()
+  if is_treesitter_available() then
+    local ok, blocks = pcall(get_blocks_via_treesitter)
+    if ok then return blocks end
+  end
+
   local lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
   local in_major_block = false
   local brace_depth = 0
@@ -1112,6 +1173,12 @@ function dataform.toggle_preview_style()
     dataform.config.preview_style = "float"
   end
   utils.notify("Dataform preview style set to: " .. dataform.config.preview_style, vim.log.levels.INFO)
+end
+
+function dataform.toggle_treesitter()
+  dataform.config.use_treesitter = not dataform.config.use_treesitter
+  local status = dataform.config.use_treesitter and "enabled" or "disabled"
+  utils.notify("Dataform Tree-sitter integration " .. status .. ".", vim.log.levels.INFO)
 end
 
 function dataform.find_variable_references()
