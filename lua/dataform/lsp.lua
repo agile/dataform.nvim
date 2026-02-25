@@ -284,18 +284,6 @@ function M.register_lsp_source(lsp_opts)
   local client_id = vim.lsp.start_client(lsp_config)
   state.lsp_client_id = client_id
 
-  if client_id then
-    vim.api.nvim_create_autocmd("FileType", {
-      pattern = "sqlx",
-      callback = function(args)
-        vim.lsp.buf_attach_client(args.buf, client_id)
-        vim.api.nvim_exec_autocmds("LspAttach", {
-          buffer = args.buf,
-          data = { client_id = client_id }
-        })
-      end,
-    })
-  end
   return client_id
 end
 

@@ -3,24 +3,7 @@
 " Dataform official product.
 " Maintainer:   https://github.com/magal1337
 
-" Prevents the plugin from being loaded multiple times. If the loaded
-" variable exists, do nothing more. Otherwise, assign the loaded
-" variable and continue running this instance of the plugin.
-
-let g:loaded_dataform = 0
-
-augroup CompileSQLX
-  autocmd!
-  autocmd BufNewFile,BufRead *.sqlx setfiletype sqlx | call s:HandleSQLXEvent()
-augroup END
-
-function! s:HandleSQLXEvent()
-  if g:loaded_dataform == 0
-    lua require('dataform').set_dataform_workdir_project_path()
-    lua require('dataform').compile()
-    let g:loaded_dataform = 1
-  endif
-endfunction
+" Use ftplugin/sqlx.lua for filetype-specific initialization
 
 lua << EOF
   local has_cmp, cmp = pcall(require, 'cmp')
@@ -28,14 +11,6 @@ lua << EOF
     cmp.register_source('dataform_actions', require('dataform').completion_cmp_source)
   end
 EOF
-
-autocmd BufWritePre *.sqlx execute "lua require('dataform').format_on_save()"
-autocmd BufWritePost *.sqlx execute "lua require('dataform').compile_on_save()"
-
-augroup DataformSignatures
-  autocmd!
-  autocmd CursorMovedI *.sqlx lua require('dataform').show_signature_help()
-augroup END
 
 command! -nargs=0 DataformSignatureHelp lua require('dataform').show_signature_help()
 command! -nargs=0 DataformTogglePreviewStyle lua require('dataform').toggle_preview_style()
