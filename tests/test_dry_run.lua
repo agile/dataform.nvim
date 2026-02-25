@@ -10,7 +10,7 @@ end
 T['dry_run'] = MiniTest.new_set()
 
 T['dry_run']['show_dry_run_virtual_text() sets extmark'] = function()
-  local df = require('dataform.project')
+  local df = require('dataform')
   local utils = require('dataform.utils')
 
   -- Mock compiled graph

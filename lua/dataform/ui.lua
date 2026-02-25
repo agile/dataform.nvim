@@ -4,7 +4,7 @@ local M = {}
 --- Suitable for Winbar or Statusline
 ---@return string?
 function M.target_path()
-  local df = require('dataform.project')
+  local df = require('dataform')
   local all_models = df.get_all_models()
   local target_file_path = require('dataform.utils').get_current_file_path()
   local model = df.find_model_by_file_path(all_models, target_file_path)
@@ -18,7 +18,7 @@ end
 --- Returns the current model's target schema
 ---@return string?
 function M.target_schema()
-  local df = require('dataform.project')
+  local df = require('dataform')
   local all_models = df.get_all_models()
   local target_file_path = require('dataform.utils').get_current_file_path()
   local model = df.find_model_by_file_path(all_models, target_file_path)
@@ -28,7 +28,7 @@ end
 --- Returns the current model's target table name
 ---@return string?
 function M.target_table()
-  local df = require('dataform.project')
+  local df = require('dataform')
   local all_models = df.get_all_models()
   local target_file_path = require('dataform.utils').get_current_file_path()
   local model = df.find_model_by_file_path(all_models, target_file_path)
@@ -38,7 +38,7 @@ end
 --- Returns the canonical (logical) target path (schema.name)
 ---@return string?
 function M.canonical_path()
-  local df = require('dataform.project')
+  local df = require('dataform')
   local all_models = df.get_all_models()
   local target_file_path = require('dataform.utils').get_current_file_path()
   local model = df.find_model_by_file_path(all_models, target_file_path)
@@ -52,7 +52,7 @@ end
 --- Returns the current model's canonical schema
 ---@return string?
 function M.canonical_schema()
-  local df = require('dataform.project')
+  local df = require('dataform')
   local all_models = df.get_all_models()
   local target_file_path = require('dataform.utils').get_current_file_path()
   local model = df.find_model_by_file_path(all_models, target_file_path)
@@ -62,7 +62,7 @@ end
 --- Returns the current model's canonical table name
 ---@return string?
 function M.canonical_table()
-  local df = require('dataform.project')
+  local df = require('dataform')
   local all_models = df.get_all_models()
   local target_file_path = require('dataform.utils').get_current_file_path()
   local model = df.find_model_by_file_path(all_models, target_file_path)
@@ -72,7 +72,7 @@ end
 --- Returns true if the resolved target matches the canonical target
 ---@return boolean
 function M.is_canonical()
-  local df = require('dataform.project')
+  local df = require('dataform')
   local all_models = df.get_all_models()
   local target_file_path = require('dataform.utils').get_current_file_path()
   local model = df.find_model_by_file_path(all_models, target_file_path)

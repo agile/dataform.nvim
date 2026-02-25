@@ -3,7 +3,7 @@ local T = MiniTest.new_set()
 T['config'] = MiniTest.new_set()
 
 T['config']['setup() overrides defaults'] = function()
-  local df = require('dataform.project')
+  local df = require('dataform')
 
   -- Verify default
   MiniTest.expect.equality(df.config.compile_on_save, true)
@@ -19,7 +19,7 @@ T['config']['setup() overrides defaults'] = function()
 end
 
 T['config']['toggle_compile_on_save() works'] = function()
-  local df = require('dataform.project')
+  local df = require('dataform')
   df.config.compile_on_save = true
 
   df.toggle_compile_on_save()
@@ -30,7 +30,7 @@ T['config']['toggle_compile_on_save() works'] = function()
 end
 
 T['config']['toggle_format_on_save() works'] = function()
-  local df = require('dataform.project')
+  local df = require('dataform')
   df.config.format_on_save = false
 
   df.toggle_format_on_save()
@@ -41,7 +41,7 @@ T['config']['toggle_format_on_save() works'] = function()
 end
 
 T['config']['toggle_preview_style() works'] = function()
-  local df = require('dataform.project')
+  local df = require('dataform')
   df.config.preview_style = "vsplit"
 
   df.toggle_preview_style()
@@ -52,7 +52,7 @@ T['config']['toggle_preview_style() works'] = function()
 end
 
 T['config']['toggle_logging() works'] = function()
-  local df = require('dataform.project')
+  local df = require('dataform')
   df.config.logging = false
 
   df.toggle_logging()

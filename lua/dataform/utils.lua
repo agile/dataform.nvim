@@ -240,6 +240,38 @@ function utils.parse_dry_run_stats(bq_output)
   return nil
 end
 
+function utils.set_dataform_workdir_project_path()
+  local config = require("dataform.config")
+  if config.options.clear_log_on_start then
+    utils.clear_log()
+  end
+
+  local current_path = utils.get_current_file_path()
+
+  utils.log({
+    event = "setup_workdir",
+    cwd = vim.fn.getcwd(),
+    nvim_dir = vim.fn.expand('%:p:h'),
+    current_file = current_path
+  })
+
+  -- Log versions for environment check
+  utils.os_execute_with_status(config.options.dataform_bin .. " --version", false, true)
+  utils.os_execute_with_status("bq version", false, true)
+
+  local is_match = string.match(current_path, "/definitions/.*")
+
+  if is_match then
+    local parent_path = current_path:gsub("/definitions/.*", "/")
+    vim.api.nvim_set_current_dir(parent_path)
+  else
+    return utils.notify(
+      "Error: File does not exist inside dataform definitions folder.",
+      vim.log.levels.ERROR
+    )
+  end
+end
+
 function utils.get_dataform_definitions_file_path()
   local file = utils.get_current_file_path()
   utils.log("get_dataform_definitions_file_path: current file=" .. file)

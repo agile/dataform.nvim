@@ -1,53 +1,64 @@
-local dataform = require("dataform.project")
-
 local M = {}
 
--- Routes calls made to this module to functions in the
--- plugin's other modules.
-M.setup = dataform.setup
-M.register_lsp_source = dataform.register_lsp_source
-M.get_lsp_config = dataform.get_lsp_config
-M.set_dataform_workdir_project_path = dataform.set_dataform_workdir_project_path
-M.compile = dataform.compile
-M.compile_on_save = dataform.compile_on_save
-M.toggle_compile_on_save = dataform.toggle_compile_on_save
-M.format_on_save = dataform.format_on_save
-M.toggle_format_on_save = dataform.toggle_format_on_save
-M.lint = dataform.lint
-M.toggle_lint_on_save = dataform.toggle_lint_on_save
-M.toggle_preview_style = dataform.toggle_preview_style
-M.toggle_treesitter = dataform.toggle_treesitter
-M.toggle_logging = dataform.toggle_logging
-M.open_log = require("dataform.utils").open_log
-M.clear_log = require("dataform.utils").clear_log
-M.get_compiled_sql_job = dataform.get_compiled_sql_job
-M.go_to_ref = dataform.go_to_ref
-M.run_action_job = dataform.run_action_job
-M.run_all = dataform.run_all
-M.run_tag = dataform.run_tag
-M.estimate_tag_cost = dataform.estimate_tag_cost
-M.run_assertions_job = dataform.run_assertions_job
-M.find_model_dependencies = dataform.find_model_dependencies
-M.find_model_dependents = dataform.find_model_dependents
-M.show_dependency_tree = dataform.show_dependency_tree
-M.show_tag_dependency_tree = dataform.show_tag_dependency_tree
-M.show_dry_run_virtual_text = dataform.show_dry_run_virtual_text
-M.find_variable_references = dataform.find_variable_references
-M.find_references = dataform.find_variable_references
-M.code_action = dataform.code_action
-M.hover = dataform.hover
-M.status = require("dataform.ui").status
-M.target_path = require("dataform.ui").target_path
-M.target_schema = require("dataform.ui").target_schema
-M.target_table = require("dataform.ui").target_table
-M.canonical_path = require("dataform.ui").canonical_path
-M.canonical_schema = require("dataform.ui").canonical_schema
-M.canonical_table = require("dataform.ui").canonical_table
-M.is_canonical = require("dataform.ui").is_canonical
-M.project_summary = require("dataform.ui").project_summary
-M.show_signature_help = require("dataform.signatures").show_signature_help
-M.clear_diagnostics = dataform.clear_diagnostics
-M.format = dataform.format
-M.completion_cmp_source = require("dataform.completion.cmp")
+-- Lazy-load sub-modules
+local function lazy(module)
+  return function(...)
+    return require("dataform." .. module)[...]
+  end
+end
+
+-- Backward compatibility metatable
+-- This allows accessing functions from sub-modules directly on require('dataform')
+setmetatable(M, {
+  __index = function(_, key)
+    -- Map special keys
+    if key == "config" then return require("dataform.config").options end
+
+    -- Check sub-modules for the requested key
+    local sub_modules = { "state", "parser", "diagnostics", "actions", "lsp", "utils", "ui" }
+    for _, mod_name in ipairs(sub_modules) do
+      local mod = require("dataform." .. mod_name)
+      if mod[key] ~= nil then
+        return mod[key]
+      end
+    end
+
+    -- Special mappings for functions that moved
+    if key == "open_log" then return require("dataform.utils").open_log end
+    if key == "clear_log" then return require("dataform.utils").clear_log end
+    if key == "show_signature_help" then return require("dataform.signatures").show_signature_help end
+    if key == "completion_cmp_source" then return require("dataform.completion.cmp") end
+
+    return nil
+  end,
+  __newindex = function(_, key, value)
+    if key == "config" then
+      require("dataform.config").options = value
+    else
+      -- Check if it belongs to state
+      local state_keys = {
+        compiled_project_table = true,
+        lsp_client_id = true,
+        current_compile_job = true,
+        current_dry_run_job = true,
+        structural_hashes = true
+      }
+      if state_keys[key] then
+        require("dataform.state")[key] = value
+      else
+        rawset(M, key, value)
+      end
+    end
+  end
+})
+
+--- Setup the Dataform plugin.
+---@param user_config table?
+function M.setup(user_config)
+  require("dataform.config").setup(user_config)
+
+  -- Register as a pseudo-LSP to work with tiny-code-action.nvim, etc.
+  require("dataform.lsp").register_lsp_source()
+end
 
 return M

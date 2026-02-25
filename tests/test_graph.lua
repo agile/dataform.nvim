@@ -3,7 +3,7 @@ local T = MiniTest.new_set()
 T['graph'] = MiniTest.new_set()
 
 T['graph']['find_model_dependencies logic'] = function()
-  local df = require('dataform.project')
+  local df = require('dataform')
   local utils = require('dataform.utils')
 
   -- Mock compiled graph
@@ -46,7 +46,7 @@ T['graph']['find_model_dependencies logic'] = function()
 end
 
 T['graph']['find_model_dependents logic'] = function()
-  local df = require('dataform.project')
+  local df = require('dataform')
   local utils = require('dataform.utils')
 
   -- Mock compiled graph: a depends on nothing, b depends on a

@@ -39,5 +39,6 @@ function _G.reload_dataform()
   package.loaded['dataform.config'] = nil
   package.loaded['dataform.state'] = nil
   package.loaded['dataform.init'] = nil
-  return require('dataform.project')
+  package.loaded['dataform'] = nil
+  return require('dataform')
 end

@@ -16,7 +16,7 @@ T['get_sqlx_blocks()']['parses simple config and sql'] = function()
     'SELECT 1'
   })
 
-  local blocks = require('dataform.project').get_sqlx_blocks()
+  local blocks = require('dataform').get_sqlx_blocks()
   MiniTest.expect.equality(blocks.config.exists, true)
   MiniTest.expect.equality(blocks.config.start_line, 1)
   MiniTest.expect.equality(blocks.config.end_line, 1)
@@ -36,7 +36,7 @@ T['get_sqlx_blocks()']['parses multi-line config'] = function()
     'SELECT * FROM table'
   })
 
-  local blocks = require('dataform.project').get_sqlx_blocks()
+  local blocks = require('dataform').get_sqlx_blocks()
   MiniTest.expect.equality(blocks.config.exists, true)
   MiniTest.expect.equality(blocks.config.start_line, 1)
   MiniTest.expect.equality(blocks.config.end_line, 4)
@@ -52,7 +52,7 @@ T['get_sqlx_blocks()']['parses js blocks'] = function()
     'SELECT ${x}'
   })
 
-  local blocks = require('dataform.project').get_sqlx_blocks()
+  local blocks = require('dataform').get_sqlx_blocks()
   MiniTest.expect.equality(blocks.js.exists, true)
   MiniTest.expect.equality(blocks.js.start_line, 1)
   MiniTest.expect.equality(blocks.js.end_line, 3)
@@ -72,7 +72,7 @@ T['get_sqlx_blocks()']['parses pre and post operations'] = function()
     '}'
   })
 
-  local blocks = require('dataform.project').get_sqlx_blocks()
+  local blocks = require('dataform').get_sqlx_blocks()
   MiniTest.expect.equality(#blocks.pre_operations, 1)
   MiniTest.expect.equality(blocks.pre_operations[1].start_line, 2)
   MiniTest.expect.equality(blocks.pre_operations[1].end_line, 4)
@@ -95,7 +95,7 @@ T['get_sqlx_blocks()']['handles nested braces in config'] = function()
     'SELECT 1'
   })
 
-  local blocks = require('dataform.project').get_sqlx_blocks()
+  local blocks = require('dataform').get_sqlx_blocks()
   MiniTest.expect.equality(blocks.config.end_line, 5)
   MiniTest.expect.equality(blocks.sql.start_line, 6)
 end

@@ -686,7 +686,7 @@ function M.add_column_description(col_name)
 end
 
 function M.get_code_actions()
-  local df = require('dataform.project')
+  local df = require('dataform')
   local context = df.get_context_at_cursor()
   local lsp_actions = {}
   local all_models = parser.get_all_models()
@@ -790,7 +790,7 @@ function M.get_code_actions()
 end
 
 function M.code_action()
-  local df = require('dataform.project')
+  local df = require('dataform')
   local context = df.get_context_at_cursor()
   local actions = {}
 
@@ -892,7 +892,7 @@ function M.get_rename_edits(old_name, new_name)
 end
 
 function M.find_variable_references()
-  local df = require('dataform.project')
+  local df = require('dataform')
   local context = df.get_context_at_cursor()
   local word = context.word
 

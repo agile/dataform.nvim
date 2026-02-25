@@ -3,7 +3,7 @@ local T = MiniTest.new_set()
 T['completion'] = MiniTest.new_set()
 
 T['completion']['js_symbols() finds local symbols'] = function()
-  local project = require('dataform.project')
+  local project = require('dataform')
   local utils = require('dataform.completion.utils')
 
   local bufnr = vim.api.nvim_create_buf(false, true)
