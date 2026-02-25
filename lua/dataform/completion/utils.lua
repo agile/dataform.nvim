@@ -1,8 +1,8 @@
 local M = {}
 
 function M.action_names()
-  local dataform = require('dataform.project')
-  local compiled = dataform.compiled_project_table or {}
+  local state = require('dataform.state')
+  local compiled = state.compiled_project_table or {}
   local tables = compiled.tables or {}
   local declarations = compiled.declarations or {}
 
@@ -32,8 +32,8 @@ function M.action_names()
 end
 
 function M.columns()
-  local dataform = require('dataform.project')
-  local compiled = dataform.compiled_project_table or {}
+  local state = require('dataform.state')
+  local compiled = state.compiled_project_table or {}
   local tables = compiled.tables or {}
   local declarations = compiled.declarations or {}
 

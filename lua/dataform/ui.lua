@@ -7,7 +7,7 @@ function M.target_path()
   local df = require('dataform.project')
   local all_models = df.get_all_models()
   local target_file_path = require('dataform.utils').get_current_file_path()
-  local model = require('dataform.project').find_model_by_file_path(all_models, target_file_path)
+  local model = df.find_model_by_file_path(all_models, target_file_path)
 
   if model and model.target then
     return string.format("%s.%s", model.target.schema or "", model.target.name or "")
@@ -21,7 +21,7 @@ function M.target_schema()
   local df = require('dataform.project')
   local all_models = df.get_all_models()
   local target_file_path = require('dataform.utils').get_current_file_path()
-  local model = require('dataform.project').find_model_by_file_path(all_models, target_file_path)
+  local model = df.find_model_by_file_path(all_models, target_file_path)
   return model and model.target and model.target.schema
 end
 
@@ -31,7 +31,7 @@ function M.target_table()
   local df = require('dataform.project')
   local all_models = df.get_all_models()
   local target_file_path = require('dataform.utils').get_current_file_path()
-  local model = require('dataform.project').find_model_by_file_path(all_models, target_file_path)
+  local model = df.find_model_by_file_path(all_models, target_file_path)
   return model and model.target and model.target.name
 end
 
@@ -41,7 +41,7 @@ function M.canonical_path()
   local df = require('dataform.project')
   local all_models = df.get_all_models()
   local target_file_path = require('dataform.utils').get_current_file_path()
-  local model = require('dataform.project').find_model_by_file_path(all_models, target_file_path)
+  local model = df.find_model_by_file_path(all_models, target_file_path)
 
   if model and model.canonicalTarget then
     return string.format("%s.%s", model.canonicalTarget.schema or "", model.canonicalTarget.name or "")
@@ -55,7 +55,7 @@ function M.canonical_schema()
   local df = require('dataform.project')
   local all_models = df.get_all_models()
   local target_file_path = require('dataform.utils').get_current_file_path()
-  local model = require('dataform.project').find_model_by_file_path(all_models, target_file_path)
+  local model = df.find_model_by_file_path(all_models, target_file_path)
   return model and model.canonicalTarget and model.canonicalTarget.schema
 end
 
@@ -65,7 +65,7 @@ function M.canonical_table()
   local df = require('dataform.project')
   local all_models = df.get_all_models()
   local target_file_path = require('dataform.utils').get_current_file_path()
-  local model = require('dataform.project').find_model_by_file_path(all_models, target_file_path)
+  local model = df.find_model_by_file_path(all_models, target_file_path)
   return model and model.canonicalTarget and model.canonicalTarget.name
 end
 
@@ -75,7 +75,7 @@ function M.is_canonical()
   local df = require('dataform.project')
   local all_models = df.get_all_models()
   local target_file_path = require('dataform.utils').get_current_file_path()
-  local model = require('dataform.project').find_model_by_file_path(all_models, target_file_path)
+  local model = df.find_model_by_file_path(all_models, target_file_path)
 
   if model and model.target and model.canonicalTarget then
     local t = model.target
@@ -89,13 +89,13 @@ end
 --- Suitable for Lualine or standard Statusline
 ---@return string
 function M.status()
-  local df = require('dataform.project')
+  local state = require('dataform.state')
   local utils = require('dataform.utils')
 
   -- Check for compilation errors first
-  if df.compiled_project_table and df.compiled_project_table.graphErrors and
-     df.compiled_project_table.graphErrors.compilationErrors and
-     #df.compiled_project_table.graphErrors.compilationErrors > 0 then
+  if state.compiled_project_table and state.compiled_project_table.graphErrors and
+     state.compiled_project_table.graphErrors.compilationErrors and
+     #state.compiled_project_table.graphErrors.compilationErrors > 0 then
     return "󱓞 Error"
   end
 
@@ -121,13 +121,13 @@ end
 --- Returns a project-wide summary
 ---@return string
 function M.project_summary()
-  local df = require('dataform.project')
-  if not df.compiled_project_table or not df.compiled_project_table.tables then
+  local state = require('dataform.state')
+  if not state.compiled_project_table or not state.compiled_project_table.tables then
     return "DF: -"
   end
 
-  local tables = #(df.compiled_project_table.tables or {})
-  local decls = #(df.compiled_project_table.declarations or {})
+  local tables = #(state.compiled_project_table.tables or {})
+  local decls = #(state.compiled_project_table.declarations or {})
   return string.format("DF: %d models / %d sources", tables, decls)
 end
 

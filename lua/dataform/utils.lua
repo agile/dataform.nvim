@@ -241,8 +241,8 @@ function utils.parse_dry_run_stats(bq_output)
 end
 
 function utils.log(msg)
-  local df_ok, df = pcall(require, "dataform.project")
-  if not df_ok or not df.config.logging then return end
+  local ok, config = pcall(require, "dataform.config")
+  if not ok or not config.options or not config.options.logging then return end
 
   local log_path = vim.fn.stdpath('cache') .. '/dataform.log'
   local f = io.open(log_path, "a")

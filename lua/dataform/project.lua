@@ -1,36 +1,40 @@
 local utils = require("dataform.utils")
+local config = require("dataform.config")
+local state = require("dataform.state")
 
 local dataform = {}
-dataform.compiled_project_table = {}
-dataform.lsp_client_id = nil
-dataform.current_compile_job = nil
-dataform.current_dry_run_job = nil
-dataform.structural_hashes = {}
 
----@alias DataformUserConfig table
----@field compile_on_save boolean? (default: true) Automatically compile Dataform project on saving a .sqlx file.
+-- Expose config and state for backward compatibility and internal access
+setmetatable(dataform, {
+  __index = function(_, key)
+    if key == "config" then return config.options end
+    if state[key] ~= nil then return state[key] end
+    return nil
+  end,
+  __newindex = function(_, key, value)
+    if key == "config" then
+      config.options = value
+    elseif state[key] ~= nil then
+      state[key] = value
+    else
+      rawset(dataform, key, value)
+    end
+  end
+})
 
-local default_config = {
-  dataform_bin = "dataform",   -- Path to dataform binary or wrapper script
-  dataform_args = {},          -- Global arguments for dataform (e.g. {"--schema-suffix", "dev"})
-  compile_on_save = true,
-  format_on_save = false,
-  lint_on_save = false,
-  formatter_bin = "sqlfluff",
-  formatter_options = { "fix", "--force", "-q" },
-  linter_bin = "sqlfluff",
-  linter_options = { "lint", "--format", "json" },
-  preview_style = "vsplit", -- Options: 'vsplit', 'float'
-  use_treesitter = true,    -- Use tree-sitter for parsing if available
-  logging = false,          -- Enable internal logging
-  clear_log_on_start = true, -- Clear log file on startup
-}
-dataform.config = vim.deepcopy(default_config)
+--- Setup the Dataform plugin.
+---@param user_config table?
+function dataform.setup(user_config)
+  config.setup(user_config)
+
+  -- Register as a pseudo-LSP to work with tiny-code-action.nvim, etc.
+  dataform.register_lsp_source()
+end
 
 -- Internal Helpers
 
 local function is_treesitter_available()
-  if not dataform.config.use_treesitter then return false end
+  if not config.options.use_treesitter then return false end
   local ok, _ = pcall(vim.treesitter.get_parser, 0, "dataform")
   return ok
 end
@@ -38,7 +42,7 @@ end
 local function get_df_args(subcommand, extra_args)
   local args = { subcommand }
   -- Add global args from config
-  for _, arg in ipairs(dataform.config.dataform_args or {}) do
+  for _, arg in ipairs(config.options.dataform_args or {}) do
     table.insert(args, arg)
   end
   -- Add subcommand-specific args
@@ -138,10 +142,10 @@ local function get_dataform_definitions_file_path()
 end
 
 function dataform.get_all_models()
-  local tables = vim.deepcopy(dataform.compiled_project_table.tables or {})
-  local operations = dataform.compiled_project_table.operations or {}
-  local declarations = dataform.compiled_project_table.declarations or {}
-  local assertions = dataform.compiled_project_table.assertions or {}
+  local tables = vim.deepcopy(state.compiled_project_table.tables or {})
+  local operations = state.compiled_project_table.operations or {}
+  local declarations = state.compiled_project_table.declarations or {}
+  local assertions = state.compiled_project_table.assertions or {}
   local all_models = vim.fn.extend(tables, operations)
   all_models = vim.fn.extend(all_models, declarations)
 
@@ -354,7 +358,7 @@ function dataform.get_lsp_config(user_lsp_opts)
               end
             end
           elseif context.type == "variable" then
-            local vars = dataform.compiled_project_table.projectConfig and dataform.compiled_project_table.projectConfig.vars
+            local vars = state.compiled_project_table.projectConfig and state.compiled_project_table.projectConfig.vars
             if vars and vars[context.var_name] then
               table.insert(hover_content, "# Project Variable: " .. context.var_name)
               table.insert(hover_content, "---")
@@ -492,8 +496,8 @@ function dataform.get_lsp_config(user_lsp_opts)
           if f then
             f:write(table.concat(lines, "\n"))
             f:close()
-            local options = table.concat(dataform.config.formatter_options or {}, " ")
-            local cmd = string.format("%s %s %s > /dev/null 2>&1", dataform.config.formatter_bin, options, tmp_sql)
+            local options = table.concat(config.options.formatter_options or {}, " ")
+            local cmd = string.format("%s %s %s > /dev/null 2>&1", config.options.formatter_bin, options, tmp_sql)
             os.execute(cmd)
             local f_in = io.open(tmp_sql, "r")
             if f_in then
@@ -544,13 +548,15 @@ function dataform.register_lsp_source(lsp_opts)
   if #vim.api.nvim_list_uis() == 0 then return end
 
   -- Ensure only one client instance
-  if dataform.lsp_client_id and vim.lsp.get_client_by_id(dataform.lsp_client_id) then
-    return dataform.lsp_client_id
+  if state.lsp_client_id and vim.lsp.get_client_by_id(state.lsp_client_id) then
+    state.lsp_client_id = state.lsp_client_id
+    return state.lsp_client_id
   end
 
   local config = dataform.get_lsp_config(lsp_opts)
   local client_id = vim.lsp.start_client(config)
-  dataform.lsp_client_id = client_id
+  state.lsp_client_id = client_id
+  state.lsp_client_id = state.lsp_client_id
 
   if client_id then
     vim.api.nvim_create_autocmd("FileType", {
@@ -568,20 +574,8 @@ function dataform.register_lsp_source(lsp_opts)
   return client_id
 end
 
-function dataform.setup(user_config)
-  user_config = user_config or {}
-  for key, value in pairs(user_config) do
-    if default_config[key] ~= nil then
-      dataform.config[key] = value
-    end
-  end
-
-  -- Register as a pseudo-LSP to work with tiny-code-action.nvim, etc.
-  dataform.register_lsp_source()
-end
-
 function dataform.set_dataform_workdir_project_path()
-  if dataform.config.clear_log_on_start then
+  if config.options.clear_log_on_start then
     utils.clear_log()
   end
 
@@ -595,7 +589,7 @@ function dataform.set_dataform_workdir_project_path()
   })
 
   -- Log versions for environment check
-  utils.os_execute_with_status(dataform.config.dataform_bin .. " --version", false, true)
+  utils.os_execute_with_status(config.options.dataform_bin .. " --version", false, true)
   utils.os_execute_with_status("bq version", false, true)
 
   local is_match = string.match(current_path, "/definitions/.*")
@@ -690,7 +684,7 @@ function dataform.get_context_at_cursor()
       -- If it's a project variable, try to resolve it
       local var_match = val:match("dataform%.projectConfig%.vars%.([%w_]+)")
       if var_match then
-        local vars = dataform.compiled_project_table.projectConfig and dataform.compiled_project_table.projectConfig.vars or {}
+        local vars = state.compiled_project_table.projectConfig and state.compiled_project_table.projectConfig.vars or {}
         return vars[var_match]
       end
       -- Strip quotes if it's a literal
@@ -799,9 +793,9 @@ function dataform.go_to_ref()
   end
 
   if context.type == "table" then
-    local df_tables = dataform.compiled_project_table.tables or {}
-    local df_declarations = dataform.compiled_project_table.declarations or {}
-    local df_ops = dataform.compiled_project_table.operations or {}
+    local df_tables = state.compiled_project_table.tables or {}
+    local df_declarations = state.compiled_project_table.declarations or {}
+    local df_ops = state.compiled_project_table.operations or {}
     local all_nodes = {}
     for _, v in ipairs(df_tables) do table.insert(all_nodes, v) end
     for _, v in ipairs(df_declarations) do table.insert(all_nodes, v) end
@@ -968,7 +962,7 @@ function dataform.hover()
   -- Project Variables hover
   if #hover_content == 0 and context.type == "variable" then
     local var_path = context.var_name
-    local vars = dataform.compiled_project_table.projectConfig and dataform.compiled_project_table.projectConfig.vars
+    local vars = state.compiled_project_table.projectConfig and state.compiled_project_table.projectConfig.vars
     if vars and vars[var_path] then
       table.insert(hover_content, "# Project Variable: " .. var_path)
       table.insert(hover_content, "---")
@@ -1030,7 +1024,7 @@ local lint_ns = vim.api.nvim_create_namespace("dataform_linter")
 function dataform.check_unresolved_references(bufnr)
   local diagnostics = {}
   local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
-  local vars = dataform.compiled_project_table.projectConfig and dataform.compiled_project_table.projectConfig.vars or {}
+  local vars = state.compiled_project_table.projectConfig and state.compiled_project_table.projectConfig.vars or {}
 
   for i, line in ipairs(lines) do
     -- 1. Check project variables
@@ -1158,7 +1152,7 @@ function dataform.format()
   local blocks = dataform.get_sqlx_blocks()
   local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
 
-  if not blocks.sql.exists or not dataform.config.formatter_bin or dataform.config.formatter_bin == "" then
+  if not blocks.sql.exists or not config.options.formatter_bin or config.options.formatter_bin == "" then
     return
   end
 
@@ -1173,9 +1167,9 @@ function dataform.format()
   f:write(table.concat(sql_lines, "\n"))
   f:close()
 
-  local options = table.concat(dataform.config.formatter_options or {}, " ")
+  local options = table.concat(config.options.formatter_options or {}, " ")
   local cmd = string.format("%s %s %s > /dev/null 2>&1",
-    dataform.config.formatter_bin, options, tmp_sql)
+    config.options.formatter_bin, options, tmp_sql)
 
   os.execute(cmd)
 
@@ -1191,7 +1185,7 @@ function dataform.format()
     end
 
     vim.api.nvim_buf_set_lines(bufnr, blocks.sql.start_line - 1, blocks.sql.end_line, false, formatted_sql_lines)
-    utils.notify("SQL block formatted with " .. dataform.config.formatter_bin .. ".", vim.log.levels.INFO)
+    utils.notify("SQL block formatted with " .. config.options.formatter_bin .. ".", vim.log.levels.INFO)
   else
     os.remove(tmp_sql)
   end
@@ -1395,15 +1389,17 @@ function dataform.show_dry_run_virtual_text()
   local bq_args = { "query", "--dry_run", query }
 
   -- Cancel existing dry run job
-  if dataform.current_dry_run_job then
-    dataform.current_dry_run_job:shutdown()
-    dataform.current_dry_run_job = nil
+  if state.current_dry_run_job then
+    state.current_dry_run_job:shutdown()
+    state.current_dry_run_job = nil
+    state.current_dry_run_job = nil
   end
 
-  dataform.current_dry_run_job = utils.execute_job(bq_command, bq_args, {
+  state.current_dry_run_job = utils.execute_job(bq_command, bq_args, {
     quiet = true,
     callback = function(code, stdout, stderr)
-      dataform.current_dry_run_job = nil
+      state.current_dry_run_job = nil
+      state.current_dry_run_job = nil
       -- bq query --dry_run sometimes prints to stderr even on success
       local output = stdout .. stderr
       if code == 0 or output:find("process") then
@@ -1427,32 +1423,36 @@ function dataform.compile(on_success)
   local new_hash = dataform.get_structural_hash(bufnr)
 
   -- If hash matches, skip compile but still trigger success callback
-  if dataform.structural_hashes[file_path] == new_hash then
+  if state.structural_hashes[file_path] == new_hash then
     utils.log("Skipping dataform compile: structure hasn't changed.")
     if on_success then on_success() end
     return
   end
 
   -- Cancel existing compile job
-  if dataform.current_compile_job then
-    dataform.current_compile_job:shutdown()
-    dataform.current_compile_job = nil
+  if state.current_compile_job then
+    state.current_compile_job:shutdown()
+    state.current_compile_job = nil
+    state.current_compile_job = nil
   end
 
   local args = get_df_args("compile", { "--json" })
-  dataform.current_compile_job = utils.execute_job(dataform.config.dataform_bin, args, {
+  state.current_compile_job = utils.execute_job(config.options.dataform_bin, args, {
     json = true,
     quiet = true,
     callback = function(code, stdout, stderr)
 
-      dataform.current_compile_job = nil
+      state.current_compile_job = nil
+      state.current_compile_job = nil
 
       local ok, decoded = pcall(vim.fn.json_decode, stdout)
       if ok then
-        dataform.compiled_project_table = decoded
+        state.compiled_project_table = decoded
+        state.compiled_project_table = state.compiled_project_table
         dataform.set_diagnostics(decoded)
         -- Store the hash only after a successful compilation
-        dataform.structural_hashes[file_path] = new_hash
+        state.structural_hashes[file_path] = new_hash
+        state.structural_hashes = state.structural_hashes
 
         utils.log({
           event = "compilation_summary",
@@ -1508,7 +1508,7 @@ function dataform.get_compiled_sql_job(incremental)
     end
 
     local final_content = header .. composite_query
-    if dataform.config.preview_style == "float" then
+    if config.options.preview_style == "float" then
       return utils.open_floating_window(final_content, "sql", "Dataform Preview")
     else
       return utils.open_buffer_with_content(final_content, "sql", "Dataform Preview")
@@ -1518,7 +1518,7 @@ end
 
 function dataform.run_all()
   local args = get_df_args("run")
-  local command = dataform.config.dataform_bin .. " " .. table.concat(args, " ")
+  local command = config.options.dataform_bin .. " " .. table.concat(args, " ")
   local status, content = utils.os_execute_with_status(command)
   if status == 0 then
     return utils.notify(
@@ -1535,7 +1535,7 @@ end
 function dataform.run_tag(args)
   local tags = args or ""
   local df_args = get_df_args("run", { "--tags=" .. tags })
-  local command = dataform.config.dataform_bin .. " " .. table.concat(df_args, " ")
+  local command = config.options.dataform_bin .. " " .. table.concat(df_args, " ")
   local status, content = utils.os_execute_with_status(command)
   if status == 0 then
     return utils.notify(
@@ -1559,7 +1559,7 @@ function dataform.run_action_job(full_refresh)
   if table then
     local action = table.target.database .. "." .. table.target.schema .. "." .. table.target.name
     local df_args = get_df_args("run", { "--full-refresh=" .. tostring(full_refresh), "--actions=" .. action })
-    local command = dataform.config.dataform_bin .. " " .. table.concat(df_args, " ")
+    local command = config.options.dataform_bin .. " " .. table.concat(df_args, " ")
 
     local status, content = utils.os_execute_with_status(command)
 
@@ -1577,7 +1577,7 @@ function dataform.run_action_job(full_refresh)
 end
 
 function dataform.run_assertions_job()
-  local assertions = dataform.compiled_project_table.assertions or {}
+  local assertions = state.compiled_project_table.assertions or {}
   local target_assertions = {}
   local target_file_path = get_dataform_definitions_file_path()
   if not target_file_path then return end
@@ -1599,7 +1599,7 @@ function dataform.run_assertions_job()
 
   for _, assertion in pairs(target_assertions) do
     local df_args = get_df_args("run", { "--actions=" .. assertion })
-    local command = dataform.config.dataform_bin .. " " .. table.concat(df_args, " ")
+    local command = config.options.dataform_bin .. " " .. table.concat(df_args, " ")
     local status, content = utils.os_execute_with_status(command)
 
     if status == 0 then
@@ -1667,45 +1667,45 @@ function dataform.find_model_dependencies()
 end
 
 function dataform.compile_on_save()
-  if dataform.config.compile_on_save then
+  if config.options.compile_on_save then
     dataform.compile(function()
        dataform.show_dry_run_virtual_text()
     end)
   end
 
-  if dataform.config.lint_on_save then
+  if config.options.lint_on_save then
     dataform.lint()
   end
 end
 
 function dataform.toggle_compile_on_save()
-  dataform.config.compile_on_save = not dataform.config.compile_on_save
-  local status = dataform.config.compile_on_save and "enabled" or "disabled"
+  config.options.compile_on_save = not config.options.compile_on_save
+  local status = config.options.compile_on_save and "enabled" or "disabled"
   utils.notify("Dataform compile on save " .. status .. ".", vim.log.levels.INFO)
 end
 
 function dataform.format_on_save()
-  if dataform.config.format_on_save then
+  if config.options.format_on_save then
     dataform.format()
   end
 end
 
 function dataform.toggle_format_on_save()
-  dataform.config.format_on_save = not dataform.config.format_on_save
-  local status = dataform.config.format_on_save and "enabled" or "disabled"
+  config.options.format_on_save = not config.options.format_on_save
+  local status = config.options.format_on_save and "enabled" or "disabled"
   utils.notify("Dataform format on save " .. status .. ".", vim.log.levels.INFO)
 end
 
 function dataform.toggle_lint_on_save()
-  dataform.config.lint_on_save = not dataform.config.lint_on_save
-  local status = dataform.config.lint_on_save and "enabled" or "disabled"
+  config.options.lint_on_save = not config.options.lint_on_save
+  local status = config.options.lint_on_save and "enabled" or "disabled"
   utils.notify("Dataform lint on save " .. status .. ".", vim.log.levels.INFO)
 end
 
 function dataform.lint()
   local bufnr = vim.api.nvim_get_current_buf()
   local blocks = dataform.get_sqlx_blocks()
-  if not blocks.sql.exists or not dataform.config.linter_bin or dataform.config.linter_bin == "" then
+  if not blocks.sql.exists or not config.options.linter_bin or config.options.linter_bin == "" then
     return
   end
 
@@ -1716,10 +1716,10 @@ function dataform.lint()
   f:write(table.concat(lines, "\n"))
   f:close()
 
-  local args = vim.deepcopy(dataform.config.linter_options or {})
+  local args = vim.deepcopy(config.options.linter_options or {})
   table.insert(args, tmp_sql)
 
-  utils.execute_job(dataform.config.linter_bin, args, {
+  utils.execute_job(config.options.linter_bin, args, {
     json = true,
     quiet = true,
     callback = function(code, stdout, stderr)
@@ -1739,7 +1739,7 @@ function dataform.lint()
               col = v.line_pos - 1,
               severity = vim.diagnostic.severity.WARN,
               message = string.format("[%s] %s", v.code, v.description),
-              source = dataform.config.linter_bin,
+              source = config.options.linter_bin,
             })
           end
         end
@@ -1753,23 +1753,23 @@ function dataform.lint()
 end
 
 function dataform.toggle_preview_style()
-  if dataform.config.preview_style == "float" then
-    dataform.config.preview_style = "vsplit"
+  if config.options.preview_style == "float" then
+    config.options.preview_style = "vsplit"
   else
-    dataform.config.preview_style = "float"
+    config.options.preview_style = "float"
   end
-  utils.notify("Dataform preview style set to: " .. dataform.config.preview_style, vim.log.levels.INFO)
+  utils.notify("Dataform preview style set to: " .. config.options.preview_style, vim.log.levels.INFO)
 end
 
 function dataform.toggle_treesitter()
-  dataform.config.use_treesitter = not dataform.config.use_treesitter
-  local status = dataform.config.use_treesitter and "enabled" or "disabled"
+  config.options.use_treesitter = not config.options.use_treesitter
+  local status = config.options.use_treesitter and "enabled" or "disabled"
   utils.notify("Dataform Tree-sitter integration " .. status .. ".", vim.log.levels.INFO)
 end
 
 function dataform.toggle_logging()
-  dataform.config.logging = not dataform.config.logging
-  local status = dataform.config.logging and "enabled" or "disabled"
+  config.options.logging = not config.options.logging
+  local status = config.options.logging and "enabled" or "disabled"
   utils.notify("Dataform logging " .. status .. ".", vim.log.levels.INFO)
 end
 
