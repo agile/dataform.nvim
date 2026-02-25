@@ -223,4 +223,175 @@ function M.get_df_args(subcommand, extra_args)
   return args
 end
 
+function M.get_context_at_cursor()
+  local cursor_pos = vim.api.nvim_win_get_cursor(0)
+  local row, col = cursor_pos[1], cursor_pos[2]
+  local lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
+  local current_line = lines[row] or ""
+
+  -- Extract word under cursor (including dots)
+  local line = current_line
+  local col_start = col
+  while col_start > 0 and line:sub(col_start, col_start):match("[%w_%.]") do
+    col_start = col_start - 1
+  end
+  local col_end = col + 1
+  while col_end <= #line and line:sub(col_end, col_end):match("[%w_%.]") do
+    col_end = col_end + 1
+  end
+  local word = line:sub(col_start + 1, col_end - 1)
+  if word == "" then word = vim.fn.expand("<cword>") end
+
+  local context = {
+    word = word,
+    row = row,
+    col = col,
+    current_line = current_line,
+    lines = lines,
+  }
+
+  local lua_escaped_word = word:gsub("([%(%)%.%%%+%-%*%?%[%]%^%$])", "%%%1")
+
+  -- 1. Check for ref/resolve (Support multi-line blocks)
+  local start_row, start_col, end_row, end_col
+  -- Find start of ${
+  for r = row, 1, -1 do
+    local l = lines[r]
+    local search_start = (r == row) and col or #l
+    local s = l:sub(1, search_start + 1):reverse():find("{$", 1, true)
+    if s then
+      start_row = r
+      start_col = #l:sub(1, search_start + 1) - s
+      break
+    end
+  end
+
+  -- Find end of }
+  if start_row then
+    for r = row, #lines do
+      local l = lines[r]
+      local search_start = (r == row) and col or 0
+      local e = l:find("}", search_start + 1, true)
+      if e then
+        end_row = r
+        end_col = e
+        break
+      end
+    end
+  end
+
+  if start_row and end_row then
+    local block_content = ""
+    for r = start_row, end_row do
+      local l = lines[r]
+      if r == start_row and r == end_row then
+        block_content = l:sub(start_col + 1, end_col)
+      elseif r == start_row then
+        block_content = l:sub(start_col + 1)
+      elseif r == end_row then
+        block_content = block_content .. "\n" .. l:sub(1, end_col)
+      else
+        block_content = block_content .. "\n" .. l
+      end
+    end
+
+    -- Improved Extraction logic for table/schema
+    local function resolve_val(val)
+      if not val then return nil end
+      val = vim.trim(val)
+      -- If it's a project variable, try to resolve it
+      local var_match = val:match("dataform%.projectConfig%.vars%.([%w_]+)")
+      if var_match then
+        local vars = state.compiled_project_table.projectConfig and state.compiled_project_table.projectConfig.vars or {}
+        return vars[var_match]
+      end
+      -- Strip quotes if it's a literal
+      return val:match('^["\'](.*)["\']$') or val
+    end
+
+    local schema, table_name
+    -- Match 2-arg: ref(arg1, arg2)
+    local s_raw, t_raw = block_content:match('ref%(%s*([^,%s]+)%s*,%s*([^%s%)]+)%s*%)')
+    if not s_raw then
+      s_raw, t_raw = block_content:match('resolve%(%s*([^,%s]+)%s*,%s*([^%s%)]+)%s*%)')
+    end
+
+    if s_raw and t_raw then
+      schema = resolve_val(s_raw)
+      table_name = resolve_val(t_raw)
+    else
+      -- Match 1-arg: ref(arg1)
+      local raw = block_content:match('ref%(%s*([^%s%)]+)%s*%)')
+      if not raw then raw = block_content:match('resolve%(%s*([^%s%)]+)%s*%)') end
+      if raw then
+        table_name = resolve_val(raw)
+      end
+    end
+
+    if table_name then
+      -- If cursor is on the word, or if we are inside the block, default to the table
+      if word == table_name or word == schema or word:find(table_name, 1, true) or block_content:find(lua_escaped_word, 1, true) then
+        context.type = "table"
+        context.table_name = table_name
+        context.schema = schema
+        return context
+      end
+    end
+  end
+
+  -- 2. Check for project variables
+  if word:find("dataform%.projectConfig%.vars%.") or current_line:find("dataform%.projectConfig%.vars%." .. lua_escaped_word) then
+    context.type = "variable"
+    context.var_name = word:match("([^%.]+)$")
+    return context
+  end
+
+  -- 3. Check for JS functions (word followed by '(')
+  if current_line:find(lua_escaped_word .. "%s*%(") then
+    context.type = "function"
+    context.func_name = word
+    return context
+  end
+
+  -- 4. Check for JS module/dot-notation references (e.g., docs.columns.my_col)
+  if word:find(".", 1, true) then
+    context.type = "js_module"
+  end
+
+  -- 5. Check if we are inside a tags block (could be multi-line)
+  local blocks = M.get_sqlx_blocks()
+  if blocks.config.exists and row >= blocks.config.start_line and row <= blocks.config.end_line then
+    -- We are in config block. Search backwards for 'tags:'
+    local is_tag = false
+    for r = row, blocks.config.start_line, -1 do
+      local l = lines[r]
+      if l:find("tags%s*:") then
+        is_tag = true
+        break
+      end
+      -- If we hit another key before 'tags:', then we are likely not in a tags list
+      -- but this is a simple heuristic.
+      if r < row and l:find("[%w_]+%s*:") then break end
+    end
+
+    if is_tag and (current_line:find('["\']' .. lua_escaped_word .. '["\']') or current_line:find(lua_escaped_word)) then
+      context.type = "tag"
+      context.tag_name = word
+      return context
+    end
+  end
+
+  utils.log({
+    event = "get_context_at_cursor",
+    word = context.word,
+    type = context.type,
+    table = context.table_name,
+    schema = context.schema,
+    func = context.func_name,
+    var = context.var_name
+  })
+
+  return context
+end
+
 return M
