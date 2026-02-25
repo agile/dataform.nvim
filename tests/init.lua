@@ -31,6 +31,7 @@ require('mini.test').setup({
 function _G.reload_dataform()
   package.loaded['dataform.project'] = nil
   package.loaded['dataform.parser'] = nil
+  package.loaded['dataform.diagnostics'] = nil
   package.loaded['dataform.utils'] = nil
   package.loaded['dataform.signatures'] = nil
   package.loaded['dataform.config'] = nil

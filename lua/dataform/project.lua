@@ -2,10 +2,11 @@ local utils = require("dataform.utils")
 local config = require("dataform.config")
 local state = require("dataform.state")
 local parser = require("dataform.parser")
+local diagnostics = require("dataform.diagnostics")
 
 local dataform = {}
 
--- Expose config, state and parser functions for backward compatibility and internal access
+-- Expose config, state, parser and diagnostics functions for backward compatibility and internal access
 setmetatable(dataform, {
   __index = function(_, key)
     if key == "config" then return config.options end
@@ -15,8 +16,10 @@ setmetatable(dataform, {
       return state[key]
     end
     if parser[key] ~= nil then return parser[key] end
+    if diagnostics[key] ~= nil then return diagnostics[key] end
     return rawget(dataform, key)
   end,
+
   __newindex = function(_, key, value)
     if key == "config" then
       config.options = value
@@ -788,136 +791,6 @@ function dataform.hover()
   end
 end
 
-local ns = vim.api.nvim_create_namespace("dataform_diagnostics")
-local vt_ns = vim.api.nvim_create_namespace("dataform_virtual_text")
-local lint_ns = vim.api.nvim_create_namespace("dataform_linter")
-
-function dataform.check_unresolved_references(bufnr)
-  local diagnostics = {}
-  local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
-  local vars = state.compiled_project_table.projectConfig and state.compiled_project_table.projectConfig.vars or {}
-
-  for i, line in ipairs(lines) do
-    -- 1. Check project variables
-    for var_name in line:gmatch("dataform%.projectConfig%.vars%.([%w_]+)") do
-      if not vars[var_name] then
-        local col_start = line:find("dataform.projectConfig.vars." .. var_name, 1, true)
-        if col_start then
-          table.insert(diagnostics, {
-            lnum = i - 1,
-            col = col_start - 1,
-            end_col = col_start - 1 + #("dataform.projectConfig.vars." .. var_name),
-            severity = vim.diagnostic.severity.WARN,
-            message = "Unresolved project variable: " .. var_name,
-            source = "Dataform",
-          })
-        end
-      end
-    end
-
-    -- 2. Check JS module references in ${ ... } (e.g., ${utils.func})
-    -- Exclude 'dataform.' to avoid double-flagging project variables
-    for ref in line:gmatch("${%s*([%w_]+%.[%w_%.]+)") do
-       -- Skip if it's ref or resolve or starts with dataform.
-       if not ref:find("^ref%.") and not ref:find("^resolve%.") and not ref:find("^dataform%.") then
-         local sig = require("dataform.signatures").get_signature_for_name(ref)
-         if not sig then
-            local col_start = line:find(ref, 1, true)
-            if col_start then
-              table.insert(diagnostics, {
-                lnum = i - 1,
-                col = col_start - 1,
-                end_col = col_start - 1 + #ref,
-                severity = vim.diagnostic.severity.WARN,
-                message = "Unresolved JS reference: " .. ref,
-                source = "Dataform",
-              })
-            end
-         end
-       end
-    end
-  end
-  return diagnostics
-end
-
-function dataform.set_diagnostics(compiled_json)
-  vim.diagnostic.reset(ns)
-  if not compiled_json then return end
-
-  local compilation_errors = {}
-  if compiled_json.graphErrors and compiled_json.graphErrors.compilationErrors then
-    for _, err in ipairs(compiled_json.graphErrors.compilationErrors) do
-      table.insert(compilation_errors, err)
-    end
-  end
-
-  -- Also check top-level compilation errors if they exist
-  if compiled_json.compilationErrors then
-    for _, err in ipairs(compiled_json.compilationErrors) do
-      table.insert(compilation_errors, err)
-    end
-  end
-
-  if #compilation_errors == 0 then return end
-
-  local diagnostics_by_file = {}
-  for _, err in ipairs(compilation_errors) do
-    if err.fileName then
-      local file_diagnostics = diagnostics_by_file[err.fileName] or {}
-      table.insert(file_diagnostics, {
-        lnum = (err.lineNumber and err.lineNumber > 0) and (err.lineNumber - 1) or 0,
-        col = (err.columnNumber and err.columnNumber > 0) and (err.columnNumber - 1) or 0,
-        severity = vim.diagnostic.severity.ERROR,
-        message = err.message,
-        source = "Dataform",
-      })
-      diagnostics_by_file[err.fileName] = file_diagnostics
-    end
-  end
-
-  for fileName, diagnostics in pairs(diagnostics_by_file) do
-    -- Robust buffer matching using absolute paths
-    local bufnr = -1
-    local abs_fileName = vim.fn.fnamemodify(fileName, ":p")
-
-    for _, buf in ipairs(vim.api.nvim_list_bufs()) do
-      local buf_name = vim.api.nvim_buf_get_name(buf)
-      if buf_name ~= "" then
-        local abs_buf_name = vim.fn.fnamemodify(buf_name, ":p")
-        if abs_buf_name == abs_fileName or abs_buf_name:find(fileName .. "$") then
-          bufnr = buf
-          break
-        end
-      end
-    end
-
-    if bufnr ~= -1 and vim.api.nvim_buf_is_loaded(bufnr) then
-      -- If it's the current buffer, also add local unresolved references
-      if bufnr == vim.api.nvim_get_current_buf() then
-        local local_diagnostics = dataform.check_unresolved_references(bufnr)
-        for _, ld in ipairs(local_diagnostics) do
-          table.insert(diagnostics, ld)
-        end
-      end
-      vim.diagnostic.set(ns, bufnr, diagnostics)
-    end
-  end
-
-  -- If current buffer wasn't in diagnostics_by_file, check it specifically for local errors
-  local cur_buf = vim.api.nvim_get_current_buf()
-  local cur_file = vim.api.nvim_buf_get_name(cur_buf)
-  if not diagnostics_by_file[cur_file] then
-     local local_diagnostics = dataform.check_unresolved_references(cur_buf)
-     if #local_diagnostics > 0 then
-        vim.diagnostic.set(ns, cur_buf, local_diagnostics)
-     end
-  end
-end
-
-function dataform.clear_diagnostics()
-  vim.diagnostic.reset(ns)
-end
-
 function dataform.format()
   local bufnr = vim.api.nvim_get_current_buf()
   local blocks = parser.get_sqlx_blocks()
@@ -1177,7 +1050,7 @@ function dataform.show_dry_run_virtual_text()
         local stats = utils.parse_dry_run_stats(output)
         if stats then
           local bufnr = vim.api.nvim_get_current_buf()
-          vim.api.nvim_buf_clear_namespace(bufnr, vt_ns, 0, -1)
+          vim.api.nvim_buf_clear_namespace(bufnr, diagnostics.vt_ns, 0, -1)
           vim.api.nvim_buf_set_extmark(bufnr, vt_ns, 0, 0, {
             virt_text = { { "󱓞 " .. stats, "DiagnosticInfo" } },
             virt_text_pos = "right_align",
@@ -1220,7 +1093,7 @@ function dataform.compile(on_success)
       if ok then
         state.compiled_project_table = decoded
         state.compiled_project_table = state.compiled_project_table
-        dataform.set_diagnostics(decoded)
+        diagnostics.set_diagnostics(decoded)
         -- Store the hash only after a successful compilation
         state.structural_hashes[file_path] = new_hash
         state.structural_hashes = state.structural_hashes
@@ -1495,17 +1368,17 @@ function dataform.lint()
     quiet = true,
     callback = function(code, stdout, stderr)
       os.remove(tmp_sql)
-      vim.diagnostic.reset(lint_ns, bufnr)
+      vim.diagnostic.reset(diagnostics.lint_ns, bufnr)
 
       local ok, decoded = pcall(vim.fn.json_decode, stdout)
       if not ok or type(decoded) ~= "table" then return end
 
-      local diagnostics = {}
+      local lint_diagnostics = {}
       -- SQLFluff returns a list of files
       for _, file_report in ipairs(decoded) do
         if file_report.violations then
           for _, v in ipairs(file_report.violations) do
-            table.insert(diagnostics, {
+            table.insert(lint_diagnostics, {
               lnum = blocks.sql.start_line - 1 + (v.line_no - 1),
               col = v.line_pos - 1,
               severity = vim.diagnostic.severity.WARN,
@@ -1516,8 +1389,8 @@ function dataform.lint()
         end
       end
 
-      if #diagnostics > 0 then
-        vim.diagnostic.set(lint_ns, bufnr, diagnostics)
+      if #lint_diagnostics > 0 then
+        vim.diagnostic.set(diagnostics.lint_ns, bufnr, lint_diagnostics)
       end
     end
   })
@@ -1651,7 +1524,7 @@ function dataform.get_code_actions()
   local bufnr = vim.api.nvim_get_current_buf()
 
   -- 1. Check current diagnostics for fixable errors
-  local diagnostics = vim.diagnostic.get(bufnr, { namespace = ns })
+  local diagnostics = vim.diagnostic.get(bufnr, { namespace = diagnostics.ns })
   for _, d in ipairs(diagnostics) do
     if d.message:find("Actions may only include .* if they create a dataset") then
       table.insert(lsp_actions, {
