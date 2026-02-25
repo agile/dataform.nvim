@@ -31,6 +31,27 @@
 - **Enhanced Diagnostics**: Real-time warnings for unresolved project variables and JavaScript references, alongside standard compilation errors.
 - **Robust Logging**: Comprehensive internal logging system for troubleshooting environment or path resolution issues.
 
+## ⌨️ Commands
+
+Consolidate your workflow with the unified `:Dataform` command. It supports smart completion for all subcommands.
+
+| Subcommand | Description |
+|---|---|
+| `:Dataform compile` | Run a full project compilation. |
+| `:Dataform preview` | View compiled SQL for the current model. |
+| `:Dataform run` | Run the current action (incremental). |
+| `:Dataform run_full` | Run the current action (full refresh). |
+| `:Dataform run_all` | Run the entire project. |
+| `:Dataform show_tree` | Open the interactive dependency graph. |
+| `:Dataform show_dry_run` | Manually trigger dry-run virtual text. |
+| `:Dataform format` | Format the SQL block using the configured formatter. |
+| `:Dataform lint` | Lint the SQL block using the configured linter. |
+| `:Dataform go_to_ref` | Jump to the definition of the symbol under cursor. |
+| `:Dataform hover` | Show documentation for the symbol under cursor. |
+| `:Dataform show_log` | Open the internal debug log. |
+
+*Many more subcommands are available for toggling settings and finding references. Use `<Tab>` to explore!*
+
 ## 📜 Requirements
 
 - [Dataform CLI](https://cloud.google.com/dataform/docs/use-dataform-cli) (`npm i -g @dataform/cli`)
@@ -56,6 +77,7 @@ If you are on Neovim 0.11 or later, you can treat Dataform exactly like any othe
   'agile/dataform.nvim',
   branch = 'enhancements',
   dependencies = {
+    'nvim-lua/plenary.nvim',
     'rcarriga/nvim-notify',
     'nvim-telescope/telescope.nvim'
   },
