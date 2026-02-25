@@ -350,6 +350,8 @@ function M.compile(on_success)
   end
 
   local args = parser.get_df_args("compile", { "--json" })
+  local notification = utils.notify("Dataform: Compiling project...", vim.log.levels.INFO)
+
   state.current_compile_job = utils.execute_job(config.options.dataform_bin, args, {
     json = true,
     quiet = true,
@@ -371,12 +373,13 @@ function M.compile(on_success)
         })
 
         if code == 0 then
-          utils.notify("Dataform compiled successfully.", vim.log.levels.INFO)
+          utils.notify("Dataform: Compiled successfully.", vim.log.levels.INFO, { replace = notification })
           if on_success then on_success() end
         else
-          utils.notify("Dataform compiled with errors (see diagnostics).", vim.log.levels.WARN)
+          utils.notify("Dataform: Compiled with errors (see diagnostics).", vim.log.levels.WARN, { replace = notification })
         end
       else
+        utils.notify("Dataform: Compilation failed (invalid JSON).", vim.log.levels.ERROR, { replace = notification })
         utils.log("Async compile failed to return valid JSON.")
       end
     end
@@ -405,7 +408,7 @@ function M.get_compiled_sql_job(incremental)
     local bq_command = "bq"
     local bq_args = { "query", "--dry_run", composite_query }
 
-    utils.notify("Running dry-run for preview...", vim.log.levels.INFO)
+    local notification = utils.notify("Dataform: Running dry-run for preview...", vim.log.levels.INFO)
 
     utils.execute_job(bq_command, bq_args, {
       quiet = true,
@@ -415,10 +418,10 @@ function M.get_compiled_sql_job(incremental)
         local header = ""
         if stats then
           header = "-- " .. stats .. "\n\n"
-          utils.notify(stats, vim.log.levels.INFO)
+          utils.notify("Dataform: " .. stats, vim.log.levels.INFO, { replace = notification })
         else
           header = "-- Dry run failed or stats unavailable\n-- " .. output:gsub("\n", "\n-- ") .. "\n\n"
-          utils.notify("Dry run failed.", vim.log.levels.WARN)
+          utils.notify("Dataform: Dry run failed.", vim.log.levels.WARN, { replace = notification })
         end
 
         local final_content = header .. composite_query
@@ -435,12 +438,13 @@ end
 --- Run the entire Dataform project.
 function M.run_all()
   local args = parser.get_df_args("run")
-  utils.notify("Running entire Dataform project...", vim.log.levels.INFO)
+  local notification = utils.notify("Dataform: Running entire project...", vim.log.levels.INFO)
   utils.system_async({ config.options.dataform_bin, unpack(args) }, {
     callback = function(code, stdout, stderr)
       if code == 0 then
-        utils.notify("Dataform run executed successfully.", vim.log.levels.INFO)
+        utils.notify("Dataform: Project run successfully.", vim.log.levels.INFO, { replace = notification })
       else
+        utils.notify("Dataform: Project run failed.", vim.log.levels.ERROR, { replace = notification })
         utils.notify("Error: Dataform run failed. \n\n" .. stderr, vim.log.levels.ERROR)
       end
     end
@@ -452,12 +456,13 @@ end
 function M.run_tag(args)
   local tags = args or ""
   local df_args = parser.get_df_args("run", { "--tags=" .. tags })
-  utils.notify("Running Dataform actions for tag: " .. tags, vim.log.levels.INFO)
+  local notification = utils.notify("Dataform: Running tag " .. tags .. "...", vim.log.levels.INFO)
   utils.system_async({ config.options.dataform_bin, unpack(df_args) }, {
     callback = function(code, stdout, stderr)
       if code == 0 then
-        utils.notify("Dataform tag run executed successfully.", vim.log.levels.INFO)
+        utils.notify("Dataform: Tag " .. tags .. " run successfully.", vim.log.levels.INFO, { replace = notification })
       else
+        utils.notify("Dataform: Tag " .. tags .. " run failed.", vim.log.levels.ERROR, { replace = notification })
         utils.notify("Error: Dataform tag run failed. \n\n" .. stderr, vim.log.levels.ERROR)
       end
     end
@@ -476,13 +481,15 @@ function M.run_action_job(full_refresh)
     local action = table_node.target.database .. "." .. table_node.target.schema .. "." .. table_node.target.name
     local df_args = parser.get_df_args("run", { "--full-refresh=" .. tostring(full_refresh), "--actions=" .. action })
 
-    utils.notify("Running Dataform action: " .. action, vim.log.levels.INFO)
+    local notification = utils.notify("Dataform: Running action " .. action .. "...", vim.log.levels.INFO)
 
     utils.system_async({ config.options.dataform_bin, unpack(df_args) }, {
       callback = function(code, stdout, stderr)
         if code == 0 then
-          utils.notify("Dataform run executed successfully.", vim.log.levels.INFO)
+          utils.notify("Dataform: Action " .. action .. " executed successfully.", vim.log.levels.INFO, { replace = notification })
         else
+          utils.notify("Dataform: Action " .. action .. " failed.", vim.log.levels.ERROR, { replace = notification })
+          -- We still show detailed error separately if it failed
           utils.notify("Error: Dataform run failed. \n\n" .. stderr, vim.log.levels.ERROR)
         end
       end
@@ -512,13 +519,14 @@ function M.run_assertions_job()
   local actions_str = table.concat(target_assertions, ",")
   local df_args = parser.get_df_args("run", { "--actions=" .. actions_str })
 
-  utils.notify("Running Dataform assertions...", vim.log.levels.INFO)
+  local notification = utils.notify("Dataform: Running assertions...", vim.log.levels.INFO)
 
   utils.system_async({ config.options.dataform_bin, unpack(df_args) }, {
     callback = function(code, stdout, stderr)
       if code == 0 then
-        utils.notify("Dataform assertions executed successfully.", vim.log.levels.INFO)
+        utils.notify("Dataform: Assertions executed successfully.", vim.log.levels.INFO, { replace = notification })
       else
+        utils.notify("Dataform: Assertions failed.", vim.log.levels.ERROR, { replace = notification })
         utils.notify("Error: Dataform assertions failed. \n\n" .. stderr, vim.log.levels.ERROR)
       end
     end

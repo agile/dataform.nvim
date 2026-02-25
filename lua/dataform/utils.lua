@@ -208,14 +208,22 @@ function utils.custom_picker(prompt_name, custom_file_paths)
   end
 end
 
-function utils.notify(msg, level)
+--- Notify the user using vim.notify or nvim-notify if available.
+---@param msg string
+---@param level integer?
+---@param opts table?
+---@return any? Notification record (if nvim-notify is used)
+function utils.notify(msg, level, opts)
+  opts = opts or {}
   utils.log({ event = "notify", message = msg, level = level })
+
   local notify_fn = vim.notify
   local has_notify_plugin, notify_plugin_fn = pcall(require, 'notify')
   if has_notify_plugin then
     notify_fn = notify_plugin_fn
   end
-  notify_fn(msg, level)
+
+  return notify_fn(msg, level, opts)
 end
 
 function utils.format_bytes(bytes)
