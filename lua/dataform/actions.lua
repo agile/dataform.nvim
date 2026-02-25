@@ -74,9 +74,8 @@ function M.show_dependency_tree(models)
 
   local tree_lines = {}
   local line_to_file = {}
-  local title = #target_models == 1
-    and ("Dependency Tree for: " .. target_models[1].target.schema .. "." .. target_models[1].target.name)
-    or "Scoped Dependency Tree"
+  local highlights = {} -- { { line, col_start, col_end, group }, ... }
+  local current_file = utils.get_current_file_path()
 
   table.insert(tree_lines, title)
   table.insert(tree_lines, string.rep("=", #tree_lines[1]))
@@ -88,11 +87,23 @@ function M.show_dependency_tree(models)
   local function build_tree(model, indent, is_last)
     local prefix = indent .. (is_last and "└── " or "├── ")
     local node_name = model.target.schema .. "." .. model.target.name
-    table.insert(tree_lines, prefix .. node_name .. " (" .. (model.type or "table") .. ")")
-    line_to_file[#tree_lines] = model.fileName
+    local line_text = prefix .. node_name .. " (" .. (model.type or "table") .. ")"
+    table.insert(tree_lines, line_text)
+    local line_idx = #tree_lines
+    line_to_file[line_idx] = model.fileName
+
+    -- Highlight root nodes
+    if indent == "" then
+      table.insert(highlights, { line = line_idx, start_col = #prefix, end_col = #prefix + #node_name, group = "Title" })
+    end
+
+    -- Highlight current file
+    if model.fileName == current_file then
+      table.insert(highlights, { line = line_idx, start_col = #prefix, end_col = #prefix + #node_name, group = "Keyword" })
+    end
 
     if seen[node_name] then
-      tree_lines[#tree_lines] = tree_lines[#tree_lines] .. " (recursive)"
+      tree_lines[line_idx] = tree_lines[line_idx] .. " (recursive)"
       return
     end
     seen[node_name] = true
@@ -113,6 +124,7 @@ function M.show_dependency_tree(models)
       else
         local dep_prefix = indent .. (is_last and "    " or "│   ") .. (i == #deps and "└── " or "├── ")
         table.insert(tree_lines, dep_prefix .. dep_target.schema .. "." .. dep_target.name .. " (unresolved)")
+        table.insert(highlights, { line = #tree_lines, start_col = #dep_prefix, end_col = #dep_prefix + #dep_target.name, group = "Comment" })
       end
     end
   end
@@ -132,7 +144,30 @@ function M.show_dependency_tree(models)
     end
   }
 
-  utils.open_interactive_buffer(table.concat(tree_lines, "\n"), "dataform_tree", "Dataform Dependencies", keymaps)
+  local _, bufnr = utils.open_interactive_buffer(table.concat(tree_lines, "\n"), "dataform_tree", "Dataform Dependencies", keymaps)
+
+  -- Apply highlights
+  local ns = vim.api.nvim_create_namespace("dataform_tree_hi")
+  for _, h in ipairs(highlights) do
+    vim.api.nvim_buf_add_highlight(bufnr, ns, h.group, h.line - 1, h.start_col, h.end_col)
+  end
+
+  -- Add cursorline highlighting
+  vim.api.nvim_create_autocmd("CursorMoved", {
+    buffer = bufnr,
+    callback = function()
+      vim.api.nvim_buf_clear_namespace(bufnr, ns, 0, -1)
+      -- Re-apply static highlights
+      for _, h in ipairs(highlights) do
+        vim.api.nvim_buf_add_highlight(bufnr, ns, h.group, h.line - 1, h.start_col, h.end_col)
+      end
+      -- Current line bold highlight
+      local curr_line = vim.api.nvim_win_get_cursor(0)[1]
+      if line_to_file[curr_line] then
+         vim.api.nvim_buf_add_highlight(bufnr, ns, "CursorLineNr", curr_line - 1, 0, -1)
+      end
+    end
+  })
 end
 
 --- Show dependency tree for all models matching a tag.
@@ -188,6 +223,7 @@ function M.estimate_tag_cost(tag)
   utils.notify("Estimating cost for tag: " .. tag .. " (" .. #filtered .. " models)... This may take a while.", vim.log.levels.INFO)
 
   local total_bytes = 0
+  local completed = 0
   local errors = {}
 
   for _, model in ipairs(filtered) do
@@ -207,27 +243,39 @@ function M.estimate_tag_cost(tag)
     end
 
     if query ~= "" then
-      local bq_command = "echo " .. vim.fn.shellescape(query) .. " | bq query --dry_run"
-      local status, result = utils.os_execute_with_status(bq_command, false, true)
+      local bq_args = { "query", "--dry_run", query }
+      utils.execute_job("bq", bq_args, {
+        quiet = true,
+        callback = function(code, stdout, stderr)
+          completed = completed + 1
+          local output = stdout .. stderr
+          if code == 0 or output:find("process") then
+            local bytes = output:match("process%s+(%d+)%s+bytes")
+            if bytes then
+              total_bytes = total_bytes + tonumber(bytes)
+            end
+          else
+            table.insert(errors, target_name)
+          end
 
-      if status == 0 then
-        local bytes = result:match("process%s+(%d+)%s+bytes")
-        if bytes then
-          total_bytes = total_bytes + tonumber(bytes)
+          if completed == #filtered then
+            local stats = utils.parse_dry_run_stats("process " .. total_bytes .. " bytes")
+            local msg = "Tag '" .. tag .. "' Cost Estimation:\n" .. stats
+            if #errors > 0 then
+              msg = msg .. "\nErrors encountered in " .. #errors .. " models: " .. table.concat(errors, ", ")
+            end
+            utils.notify(msg, vim.log.levels.INFO)
+          end
         end
-      else
-        table.insert(errors, target_name)
+      })
+    else
+      completed = completed + 1
+      if completed == #filtered then
+        local stats = utils.parse_dry_run_stats("process " .. total_bytes .. " bytes")
+        utils.notify("Tag '" .. tag .. "' Cost Estimation:\n" .. stats, vim.log.levels.INFO)
       end
     end
   end
-
-  local stats = utils.parse_dry_run_stats("process " .. total_bytes .. " bytes")
-  local msg = "Tag '" .. tag .. "' Cost Estimation:\n" .. stats
-  if #errors > 0 then
-    msg = msg .. "\nErrors encountered in " .. #errors .. " models: " .. table.concat(errors, ", ")
-  end
-
-  utils.notify(msg, vim.log.levels.INFO)
 end
 
 --- Show dry-run cost and bytes as virtual text in the current buffer.
@@ -350,38 +398,49 @@ function M.get_compiled_sql_job(incremental)
     if preOpsClean:sub(-1) ~= ";" and preOps ~= "" then preOps = preOps .. ";" end
 
     local composite_query = preOps .. table_node[queryKey] .. ";\n" .. postOps
-    local bq_command = "echo " .. vim.fn.shellescape(composite_query) .. " | bq query --dry_run"
+    local bq_command = "bq"
+    local bq_args = { "query", "--dry_run", composite_query }
 
-    local _, result = utils.os_execute_with_status(bq_command)
+    utils.notify("Running dry-run for preview...", vim.log.levels.INFO)
 
-    local stats = utils.parse_dry_run_stats(result)
-    local header = ""
-    if stats then
-      header = "-- " .. stats .. "\n\n"
-      utils.notify(stats, vim.log.levels.INFO)
-    else
-      header = "-- Dry run failed or stats unavailable\n-- " .. result:gsub("\n", "\n-- ") .. "\n\n"
-      utils.notify(result, vim.log.levels.WARN)
-    end
+    utils.execute_job(bq_command, bq_args, {
+      quiet = true,
+      callback = function(code, stdout, stderr)
+        local output = stdout .. stderr
+        local stats = utils.parse_dry_run_stats(output)
+        local header = ""
+        if stats then
+          header = "-- " .. stats .. "\n\n"
+          utils.notify(stats, vim.log.levels.INFO)
+        else
+          header = "-- Dry run failed or stats unavailable\n-- " .. output:gsub("\n", "\n-- ") .. "\n\n"
+          utils.notify("Dry run failed.", vim.log.levels.WARN)
+        end
 
-    local final_content = header .. composite_query
-    if config.options.preview_style == "float" then
-      return utils.open_floating_window(final_content, "sql", "Dataform Preview")
-    else
-      return utils.open_buffer_with_content(final_content, "sql", "Dataform Preview")
-    end
+        local final_content = header .. composite_query
+        if config.options.preview_style == "float" then
+          utils.open_floating_window(final_content, "sql", "Dataform Preview")
+        else
+          utils.open_buffer_with_content(final_content, "sql", "Dataform Preview")
+        end
+      end
+    })
   end
 end
 
 --- Run the entire Dataform project.
 function M.run_all()
   local args = parser.get_df_args("run")
-  local command = config.options.dataform_bin .. " " .. table.concat(args, " ")
-  local status, content = utils.os_execute_with_status(command)
-  if status == 0 then
-    return utils.notify("Dataform run executed successfully.", vim.log.levels.INFO)
-  end
-  return utils.notify("Error: Dataform run failed. \n\n" .. content, vim.log.levels.ERROR)
+  utils.notify("Running entire Dataform project...", vim.log.levels.INFO)
+  utils.system_async({ config.options.dataform_bin, unpack(args) }, {
+    callback = function(code, stdout, stderr)
+      if code == 0 then
+        utils.notify("Dataform run executed successfully.", vim.log.levels.INFO)
+      else
+        utils.notify("Error: Dataform run failed. \n\n" .. stderr, vim.log.levels.ERROR)
+      end
+    end
+  })
 end
 
 --- Run Dataform actions matching a tag.
@@ -389,12 +448,16 @@ end
 function M.run_tag(args)
   local tags = args or ""
   local df_args = parser.get_df_args("run", { "--tags=" .. tags })
-  local command = config.options.dataform_bin .. " " .. table.concat(df_args, " ")
-  local status, content = utils.os_execute_with_status(command)
-  if status == 0 then
-    return utils.notify("Dataform tag run executed successfully.", vim.log.levels.INFO)
-  end
-  return utils.notify("Error: Dataform tag run failed. \n\n" .. content, vim.log.levels.ERROR)
+  utils.notify("Running Dataform actions for tag: " .. tags, vim.log.levels.INFO)
+  utils.system_async({ config.options.dataform_bin, unpack(df_args) }, {
+    callback = function(code, stdout, stderr)
+      if code == 0 then
+        utils.notify("Dataform tag run executed successfully.", vim.log.levels.INFO)
+      else
+        utils.notify("Error: Dataform tag run failed. \n\n" .. stderr, vim.log.levels.ERROR)
+      end
+    end
+  })
 end
 
 --- Run the Dataform action defined in the current buffer.
@@ -408,13 +471,18 @@ function M.run_action_job(full_refresh)
   if table_node then
     local action = table_node.target.database .. "." .. table_node.target.schema .. "." .. table_node.target.name
     local df_args = parser.get_df_args("run", { "--full-refresh=" .. tostring(full_refresh), "--actions=" .. action })
-    local command = config.options.dataform_bin .. " " .. table.concat(df_args, " ")
-    local status, content = utils.os_execute_with_status(command)
 
-    if status == 0 then
-      return utils.notify("Dataform run executed successfully.", vim.log.levels.INFO)
-    end
-    return utils.notify("Error: Dataform run failed. \n\n" .. content, vim.log.levels.ERROR)
+    utils.notify("Running Dataform action: " .. action, vim.log.levels.INFO)
+
+    utils.system_async({ config.options.dataform_bin, unpack(df_args) }, {
+      callback = function(code, stdout, stderr)
+        if code == 0 then
+          utils.notify("Dataform run executed successfully.", vim.log.levels.INFO)
+        else
+          utils.notify("Error: Dataform run failed. \n\n" .. stderr, vim.log.levels.ERROR)
+        end
+      end
+    })
   end
 end
 
@@ -437,18 +505,22 @@ function M.run_assertions_job()
     return utils.notify("Error: There is no assertions for this file.", vim.log.levels.ERROR)
   end
 
-  for _, assertion in pairs(target_assertions) do
-    local df_args = parser.get_df_args("run", { "--actions=" .. assertion })
-    local command = config.options.dataform_bin .. " " .. table.concat(df_args, " ")
-    local status, content = utils.os_execute_with_status(command)
+  local actions_str = table.concat(target_assertions, ",")
+  local df_args = parser.get_df_args("run", { "--actions=" .. actions_str })
 
-    if status == 0 then
-      utils.notify("Dataform assertion: \n" .. assertion .. "\nexecuted successfully.", vim.log.levels.INFO)
-    else
-      utils.notify("Error: Dataform assertions failed. \n\n" .. content, vim.log.levels.ERROR)
+  utils.notify("Running Dataform assertions...", vim.log.levels.INFO)
+
+  utils.system_async({ config.options.dataform_bin, unpack(df_args) }, {
+    callback = function(code, stdout, stderr)
+      if code == 0 then
+        utils.notify("Dataform assertions executed successfully.", vim.log.levels.INFO)
+      else
+        utils.notify("Error: Dataform assertions failed. \n\n" .. stderr, vim.log.levels.ERROR)
+      end
     end
-  end
+  })
 end
+
 
 --- Find and show models that depend on the current model.
 function M.find_model_dependents()
@@ -879,8 +951,8 @@ end
 --- Get a set of workspace edits for renaming a model.
 ---@param old_name string
 ---@param new_name string
----@return table WorkspaceEdit
-function M.get_rename_edits(old_name, new_name)
+---@param callback function
+function M.get_rename_edits(old_name, new_name, callback)
   local search_patterns = {
     "ref%s*%(%s*([\"'][^\"']+[\"']%s*,%s*)?[\"']" .. old_name:gsub("%.", "%.") .. "[\"']%s*%)",
     "resolve%s*%(%s*([\"'][^\"']+[\"']%s*,%s*)?[\"']" .. old_name:gsub("%.", "%.") .. "[\"']%s*%)",
@@ -892,49 +964,53 @@ function M.get_rename_edits(old_name, new_name)
   local cmd = string.format("grep -rnE %s . --include='*.sqlx' --include='*.js' --include='*.ts' --include='workflow_settings.yaml' --include='*.yaml' --include='*.json' 2>/dev/null",
     vim.fn.shellescape(combined_pattern))
 
-  local _, output = utils.os_execute_with_status(cmd, false, true)
-  local changes = {}
-  local documentChanges = {}
+  utils.system_async(cmd, {
+    quiet = true,
+    callback = function(code, stdout, stderr)
+      local changes = {}
+      local documentChanges = {}
 
-  for line in output:gmatch("[^\r\n]+") do
-    local file, lnum, text = line:match("([^:]+):(%d+):(.*)")
-    if file and lnum then
-      local abs_path = vim.fn.fnamemodify(file, ":p")
-      local uri = "file://" .. abs_path
+      for line in stdout:gmatch("[^\r\n]+") do
+        local file, lnum, text = line:match("([^:]+):(%d+):(.*)")
+        if file and lnum then
+          local abs_path = vim.fn.fnamemodify(file, ":p")
+          local uri = "file://" .. abs_path
 
-      local s, e = text:find('["\']' .. old_name .. '["\']')
-      if s then
-        s = s + 1
-        e = e - 1
+          local s, e = text:find('["\']' .. old_name .. '["\']')
+          if s then
+            s = s + 1
+            e = e - 1
 
-        changes[uri] = changes[uri] or {}
-        table.insert(changes[uri], {
-          range = {
-            start = { line = tonumber(lnum) - 1, character = s - 1 },
-            ["end"] = { line = tonumber(lnum) - 1, character = e }
-          },
-          newText = new_name
-        })
+            changes[uri] = changes[uri] or {}
+            table.insert(changes[uri], {
+              range = {
+                start = { line = tonumber(lnum) - 1, character = s - 1 },
+                ["end"] = { line = tonumber(lnum) - 1, character = e }
+              },
+              newText = new_name
+            })
+          end
+        end
       end
-    end
-  end
 
-  local all_models = parser.get_all_models()
-  for _, model in pairs(all_models) do
-    if model.target.name == old_name and model.fileName:find(old_name, 1, true) then
-      local new_fileName = model.fileName:gsub(old_name, new_name)
-      table.insert(documentChanges, {
-        kind = "rename",
-        oldUri = "file://" .. vim.fn.fnamemodify(model.fileName, ":p"),
-        newUri = "file://" .. vim.fn.fnamemodify(new_fileName, ":p")
+      local all_models = parser.get_all_models()
+      for _, model in pairs(all_models) do
+        if model.target.name == old_name and model.fileName:find(old_name, 1, true) then
+          local new_fileName = model.fileName:gsub(old_name, new_name)
+          table.insert(documentChanges, {
+            kind = "rename",
+            oldUri = "file://" .. vim.fn.fnamemodify(model.fileName, ":p"),
+            newUri = "file://" .. vim.fn.fnamemodify(new_fileName, ":p")
+          })
+        end
+      end
+
+      callback({
+        changes = changes,
+        documentChanges = #documentChanges > 0 and documentChanges or nil
       })
     end
-  end
-
-  return {
-    changes = changes,
-    documentChanges = #documentChanges > 0 and documentChanges or nil
-  }
+  })
 end
 
 --- Find and show all references to the symbol under the cursor.
@@ -988,36 +1064,39 @@ function M.find_references()
   local cmd = string.format("grep -rnE %s . --include='*.sqlx' --include='*.js' --include='*.ts' --include='workflow_settings.yaml' --include='*.yaml' --include='*.json' 2>/dev/null",
     vim.fn.shellescape(combined_pattern))
 
-  local _, output = utils.os_execute_with_status(cmd, false, true)
+  utils.system_async(cmd, {
+    quiet = true,
+    callback = function(code, stdout, stderr)
+      local results = {}
+      local seen = {}
+      for line in stdout:gmatch("[^\r\n]+") do
+        if not seen[line] then
+          table.insert(results, line)
+          seen[line] = true
+        end
+      end
 
-  local results = {}
-  local seen = {}
-  for line in output:gmatch("[^\r\n]+") do
-    if not seen[line] then
-      table.insert(results, line)
-      seen[line] = true
+      if #results == 0 then
+        utils.notify("No references found for " .. label, vim.log.levels.INFO)
+        return
+      end
+
+      local qf_list = {}
+      for _, line in ipairs(results) do
+        local file, lnum, text = line:match("([^:]+):(%d+):(.*)")
+        if file and lnum then
+          table.insert(qf_list, {
+            filename = file,
+            lnum = tonumber(lnum),
+            text = vim.trim(text)
+          })
+        end
+      end
+
+      vim.fn.setqflist(qf_list)
+      vim.cmd("copen")
     end
-  end
-
-  if #results == 0 then
-    utils.notify("No references found for " .. label, vim.log.levels.INFO)
-    return
-  end
-
-  local qf_list = {}
-  for _, line in ipairs(results) do
-    local file, lnum, text = line:match("([^:]+):(%d+):(.*)")
-    if file and lnum then
-      table.insert(qf_list, {
-        filename = file,
-        lnum = tonumber(lnum),
-        text = vim.trim(text)
-      })
-    end
-  end
-
-  vim.fn.setqflist(qf_list)
-  vim.cmd("copen")
+  })
 end
 
 return M

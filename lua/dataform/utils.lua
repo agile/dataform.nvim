@@ -255,9 +255,9 @@ function utils.set_dataform_workdir_project_path()
     current_file = current_path
   })
 
-  -- Log versions for environment check
-  utils.os_execute_with_status(config.options.dataform_bin .. " --version", false, true)
-  utils.os_execute_with_status("bq version", false, true)
+  -- Log versions for environment check (Async)
+  utils.system_async(config.options.dataform_bin .. " --version", { quiet = true })
+  utils.system_async("bq version", { quiet = true })
 
   local is_match = string.match(current_path, "/definitions/.*")
 

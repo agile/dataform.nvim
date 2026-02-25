@@ -94,23 +94,32 @@ function M.set_diagnostics(compiled_json)
     end
   end
 
-  for fileName, diags in pairs(diagnostics_by_file) do
-    -- Robust buffer matching using absolute paths
-    local bufnr = -1
-    local abs_fileName = vim.fn.fnamemodify(fileName, ":p")
+  -- Pre-calculate absolute paths for open buffers to optimize matching
+  local buf_map = {}
+  for _, buf in ipairs(vim.api.nvim_list_bufs()) do
+    if vim.api.nvim_buf_is_loaded(buf) then
+      local name = vim.api.nvim_buf_get_name(buf)
+      if name ~= "" then
+        buf_map[vim.fn.fnamemodify(name, ":p")] = buf
+      end
+    end
+  end
 
-    for _, buf in ipairs(vim.api.nvim_list_bufs()) do
-      local buf_name = vim.api.nvim_buf_get_name(buf)
-      if buf_name ~= "" then
-        local abs_buf_name = vim.fn.fnamemodify(buf_name, ":p")
-        if abs_buf_name == abs_fileName or abs_buf_name:find(fileName .. "$") then
-          bufnr = buf
+  for fileName, diags in pairs(diagnostics_by_file) do
+    local abs_fileName = vim.fn.fnamemodify(fileName, ":p")
+    local bufnr = buf_map[abs_fileName]
+
+    -- Fallback for relative paths or different separators
+    if not bufnr then
+      for b_path, b_buf in pairs(buf_map) do
+        if b_path:find(fileName .. "$") then
+          bufnr = b_buf
           break
         end
       end
     end
 
-    if bufnr ~= -1 and vim.api.nvim_buf_is_loaded(bufnr) then
+    if bufnr then
       -- If it's the current buffer, also add local unresolved references
       if bufnr == vim.api.nvim_get_current_buf() then
         local local_diagnostics = M.check_unresolved_references(bufnr)
@@ -125,7 +134,9 @@ function M.set_diagnostics(compiled_json)
   -- If current buffer wasn't in diagnostics_by_file, check it specifically for local errors
   local cur_buf = vim.api.nvim_get_current_buf()
   local cur_file = vim.api.nvim_buf_get_name(cur_buf)
-  if not diagnostics_by_file[cur_file] then
+  local abs_cur_file = vim.fn.fnamemodify(cur_file, ":p")
+
+  if not diagnostics_by_file[cur_file] and not diagnostics_by_file[abs_cur_file] then
      local local_diagnostics = M.check_unresolved_references(cur_buf)
      if #local_diagnostics > 0 then
         vim.diagnostic.set(M.ns, cur_buf, local_diagnostics)

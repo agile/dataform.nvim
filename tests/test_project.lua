@@ -196,19 +196,26 @@ T['actions']['get_rename_edits logic'] = function()
   local df = _G.reload_dataform()
   local utils = require('dataform.utils')
 
-  -- Mock grep output
-  local old_exec = utils.os_execute_with_status
-  utils.os_execute_with_status = function()
-    return 0, "definitions/test.sqlx:1:SELECT * FROM ${ref('old_name')}"
+  -- Mock async system call
+  local old_async = utils.system_async
+  utils.system_async = function(cmd, opts)
+    if opts.callback then
+      opts.callback(0, "definitions/test.sqlx:1:SELECT * FROM ${ref('old_name')}", "")
+    end
   end
 
-  local edit = df.get_rename_edits("old_name", "new_name")
+  local captured_edit
+  df.get_rename_edits("old_name", "new_name", function(edit)
+    captured_edit = edit
+  end)
 
   local found_edit = false
-  for uri, changes in pairs(edit.changes) do
-    if uri:find("test.sqlx") then
-      for _, change in ipairs(changes) do
-        if change.newText == "new_name" then found_edit = true end
+  if captured_edit and captured_edit.changes then
+    for uri, changes in pairs(captured_edit.changes) do
+      if uri:find("test.sqlx") then
+        for _, change in ipairs(changes) do
+          if change.newText == "new_name" then found_edit = true end
+        end
       end
     end
   end
@@ -216,7 +223,7 @@ T['actions']['get_rename_edits logic'] = function()
   MiniTest.expect.equality(found_edit, true)
 
   -- Cleanup
-  utils.os_execute_with_status = old_exec
+  utils.system_async = old_async
 end
 
 return T

@@ -193,14 +193,14 @@ end
 --- Get all models (tables, declarations, operations, assertions) from the compiled project.
 ---@return table[]
 function M.get_all_models()
-  local tables = vim.deepcopy(state.compiled_project_table.tables or {})
-  local operations = state.compiled_project_table.operations or {}
-  local declarations = state.compiled_project_table.declarations or {}
-  local assertions = state.compiled_project_table.assertions or {}
-  local all_models = vim.fn.extend(tables, operations)
-  all_models = vim.fn.extend(all_models, declarations)
-
-  return vim.fn.extend(all_models, assertions)
+  local all_models = {}
+  local keys = { "tables", "operations", "declarations", "assertions" }
+  for _, key in ipairs(keys) do
+    for _, item in ipairs(state.compiled_project_table[key] or {}) do
+      table.insert(all_models, item)
+    end
+  end
+  return all_models
 end
 
 --- Find a model by its source file path.

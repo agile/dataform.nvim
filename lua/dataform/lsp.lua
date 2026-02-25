@@ -6,6 +6,158 @@ local actions = require("dataform.actions")
 local diagnostics = require("dataform.diagnostics")
 local utils = require("dataform.utils")
 
+local function find_symbol_location()
+  local context = parser.get_context_at_cursor()
+  local word = context.word
+  local lines = context.lines
+
+  if word == "" then return nil end
+
+  -- 1. Check for CTE navigation (SQL files only or SQL blocks)
+  local cte_pattern = "WITH%s+" .. word .. "%s+AS%s*%("
+  local cte_pattern_comma = ",%s*" .. word .. "%s+AS%s*%("
+  for i, line in ipairs(lines) do
+    if line:find(cte_pattern) or line:find(cte_pattern_comma) then
+      return {
+        uri = "file://" .. vim.api.nvim_buf_get_name(0),
+        range = {
+          start = { line = i - 1, character = 0 },
+          ["end"] = { line = i - 1, character = 0 }
+        }
+      }
+    end
+  end
+
+  -- 2. Table navigation
+  if context.type == "table" then
+    local all_models = parser.get_all_models()
+    for _, node in pairs(all_models) do
+      if node.target.name == context.table_name and (node.target.schema == context.schema or not context.schema) then
+        return {
+          uri = "file://" .. vim.fn.fnamemodify(node.fileName, ":p"),
+          range = {
+            start = { line = 0, character = 0 },
+            ["end"] = { line = 0, character = 0 }
+          }
+        }
+      end
+    end
+  end
+
+  -- 3. Variable navigation
+  if context.type == "variable" then
+    local var_path = context.var_name
+    local settings_file = "workflow_settings.yaml"
+    if vim.fn.filereadable(settings_file) == 1 then
+      local abs_path = vim.fn.fnamemodify(settings_file, ":p")
+      local f = io.open(settings_file, "r")
+      if f then
+        local i = 0
+        for line in f:lines() do
+          if line:find("^" .. var_path .. ":") or line:find(" " .. var_path .. ":") then
+            f:close()
+            return {
+              uri = "file://" .. abs_path,
+              range = {
+                start = { line = i, character = 0 },
+                ["end"] = { line = i, character = 0 }
+              }
+            }
+          end
+          i = i + 1
+        end
+        f:close()
+      end
+    end
+  end
+
+  -- 4. JS module navigation (Module navigation like module.func)
+  if word:find("%.") or context.type == "function" or context.type == "js_module" then
+    local parts = vim.split(word, "%.")
+    local js_module = parts[1]
+    local var_name = parts[#parts]
+
+    -- Detect project root
+    local root_markers = { "dataform.json", "workflow_settings.yaml", ".git" }
+    local root_file = vim.fs.find(root_markers, { upward = true, path = vim.api.nvim_buf_get_name(0) })[1]
+    local root = root_file and vim.fn.fnamemodify(root_file, ":h") or vim.fn.getcwd()
+
+    local js_path = root .. "/includes/" .. js_module .. ".js"
+    local ts_path = root .. "/includes/" .. js_module .. ".ts"
+    local includes_file = vim.fn.filereadable(ts_path) == 1 and ts_path or js_path
+
+    if vim.fn.filereadable(includes_file) == 1 then
+      local f = io.open(includes_file, "r")
+      if f then
+        local content = f:read("*all")
+        f:close()
+
+        local sub_patterns = {
+          "function%s+" .. var_name .. "%s*%(",
+          "export%s+function%s+" .. var_name .. "%s*%(",
+          "const%s+" .. var_name .. "%s*=%s*%(.-%)%s*=>",
+          "export%s+const%s+" .. var_name .. "%s*=%s*%(.-%)%s*=>",
+          "const%s+" .. var_name .. "%s*=%s*function",
+          var_name .. "%s*[:=]%s*function",
+          var_name .. "%s*[:=]%s*['\"].-['\"]",
+          "const%s+" .. var_name .. "%s*=%s*['\"].-['\"]",
+          "export%s+const%s+" .. var_name .. "%s*=%s*['\"].-['\"]",
+          var_name .. "%s*[:=]%s*%b{}",
+        }
+
+        for _, pattern in ipairs(sub_patterns) do
+          local s = content:find(pattern)
+          if s then
+            local line_num = 0
+            local before = content:sub(1, s)
+            for _ in before:gmatch("\n") do
+              line_num = line_num + 1
+            end
+
+            return {
+              uri = "file://" .. vim.fn.fnamemodify(includes_file, ":p"),
+              range = {
+                start = { line = line_num, character = 0 },
+                ["end"] = { line = line_num, character = 0 }
+              }
+            }
+          end
+        end
+      end
+    end
+  end
+
+  -- 5. Search for local JS definition
+  local blocks = parser.get_sqlx_blocks()
+  if blocks.js.exists then
+    local var_patterns = {
+      "const%s+" .. word .. "%s*=",
+      "let%s+" .. word .. "%s*=",
+      "var%s+" .. word .. "%s*=",
+      "function%s+" .. word .. "%s*%(",
+      word .. "%s*[:=]%s*function"
+    }
+    for i = blocks.js.start_line, blocks.js.end_line do
+      local line = lines[i]
+      if line then
+        for _, pattern in ipairs(var_patterns) do
+          if line:find(pattern) then
+            return {
+              uri = "file://" .. vim.api.nvim_buf_get_name(0),
+              range = {
+                start = { line = i - 1, character = 0 },
+                ["end"] = { line = i - 1, character = 0 }
+              }
+            }
+          end
+        end
+      end
+    end
+  end
+
+  return nil
+end
+
 --- Get the LSP client configuration.
 ---@param user_lsp_opts table?
 ---@return table LSP configuration
@@ -124,24 +276,9 @@ function M.get_lsp_config(user_lsp_opts)
             callback(nil, nil)
           end
         elseif method == "textDocument/definition" then
-          local context = parser.get_context_at_cursor()
-          local all_models = parser.get_all_models()
-
-          if context.type == "table" then
-            for _, node in pairs(all_models) do
-              if node.target.name == context.table_name and (not context.schema or node.target.schema == context.schema) then
-                callback(nil, {
-                  uri = "file://" .. vim.fn.fnamemodify(node.fileName, ":p"),
-                  range = {
-                    start = { line = 0, character = 0 },
-                    ["end"] = { line = 0, character = 0 }
-                  }
-                })
-                return true, 1
-              end
-            end
-          end
-          callback(nil, nil)
+          local location = find_symbol_location()
+          callback(nil, location)
+          return true, 1
         elseif method == "textDocument/references" then
           local context = parser.get_context_at_cursor()
           if context.word == "" then callback(nil, nil) return true, 1 end
@@ -176,21 +313,26 @@ function M.get_lsp_config(user_lsp_opts)
           local cmd = string.format("grep -rnE %s . --include='*.sqlx' --include='*.js' --include='*.ts' --include='workflow_settings.yaml' --include='*.yaml' --include='*.json' 2>/dev/null",
             vim.fn.shellescape(combined_pattern))
 
-          local _, output = utils.os_execute_with_status(cmd, false, true)
-          local locations = {}
-          for line in output:gmatch("[^\r\n]+") do
-            local file, lnum, text = line:match("([^:]+):(%d+):(.*)")
-            if file and lnum then
-              table.insert(locations, {
-                uri = "file://" .. vim.fn.fnamemodify(file, ":p"),
-                range = {
-                  start = { line = tonumber(lnum) - 1, character = 0 },
-                  ["end"] = { line = tonumber(lnum) - 1, character = 100 }
-                }
-              })
+          utils.system_async(cmd, {
+            quiet = true,
+            callback = function(code, stdout, stderr)
+              local locations = {}
+              for line in stdout:gmatch("[^\r\n]+") do
+                local file, lnum, text = line:match("([^:]+):(%d+):(.*)")
+                if file and lnum then
+                  table.insert(locations, {
+                    uri = "file://" .. vim.fn.fnamemodify(file, ":p"),
+                    range = {
+                      start = { line = tonumber(lnum) - 1, character = 0 },
+                      ["end"] = { line = tonumber(lnum) - 1, character = 100 }
+                    }
+                  })
+                end
+              end
+              callback(nil, locations)
             end
-          end
-          callback(nil, locations)
+          })
+          return true, 1
         elseif method == "textDocument/documentSymbol" then
           local blocks = parser.get_sqlx_blocks()
           local symbols = {}
@@ -223,8 +365,10 @@ function M.get_lsp_config(user_lsp_opts)
             return true, 1
           end
 
-          local workspace_edit = actions.get_rename_edits(context.table_name, params.newName)
-          callback(nil, workspace_edit)
+          actions.get_rename_edits(context.table_name, params.newName, function(workspace_edit)
+            callback(nil, workspace_edit)
+          end)
+          return true, 1
         elseif method == "textDocument/formatting" then
           local bufnr = vim.uri_to_bufnr(params.textDocument.uri)
           local blocks = parser.get_sqlx_blocks()
@@ -236,16 +380,28 @@ function M.get_lsp_config(user_lsp_opts)
             f:write(table.concat(lines, "\n"))
             f:close()
             local opt_str = table.concat(config.options.formatter_options or {}, " ")
-            local cmd = string.format("%s %s %s > /dev/null 2>&1", config.options.formatter_bin, opt_str, tmp_sql)
-            os.execute(cmd)
-            local f_in = io.open(tmp_sql, "r")
-            if f_in then
-              local formatted = f_in:read("*all")
-              f_in:close()
-              os.remove(tmp_sql)
-              callback(nil, { { range = { start = { line = blocks.sql.start_line - 1, character = 0 }, ["end"] = { line = blocks.sql.end_line - 1, character = 1000 } }, newText = formatted } })
-            else os.remove(tmp_sql) callback(nil, nil) end
+            local cmd = string.format("%s %s %s", config.options.formatter_bin, opt_str, tmp_sql)
+            utils.system_async(cmd, {
+              quiet = true,
+              callback = function(code, stdout, stderr)
+                os.remove(tmp_sql)
+                if code == 0 then
+                  callback(nil, { {
+                    range = {
+                      start = { line = blocks.sql.start_line - 1, character = 0 },
+                      ["end"] = { line = blocks.sql.end_line - 1, character = 1000 }
+                    },
+                    newText = stdout
+                  } })
+                else
+                  callback(nil, nil)
+                end
+              end
+            })
+          else
+            callback(nil, nil)
           end
+          return true, 1
         elseif method == "workspace/executeCommand" then
           if params.command == "dataform.create_declaration" then actions.create_declaration(unpack(params.arguments))
           elseif params.command == "dataform.add_column_description" then actions.add_column_description(unpack(params.arguments))
@@ -295,94 +451,13 @@ end
 
 --- Go to the definition/reference of the symbol under the cursor.
 function M.go_to_ref()
-  local context = parser.get_context_at_cursor()
-  local word = context.word
-  local lines = context.lines
-
-  local cte_pattern = "WITH%s+" .. word .. "%s+AS%s*%("
-  local cte_pattern_comma = ",%s*" .. word .. "%s+AS%s*%("
-  for i, line in ipairs(lines) do
-    if line:find(cte_pattern) or line:find(cte_pattern_comma) then
-      vim.api.nvim_win_set_cursor(0, {i, 0})
-      return
-    end
-  end
-
-  if context.type == "table" then
-    local all_models = parser.get_all_models()
-    for _, node in pairs(all_models) do
-      if node.target.name == context.table_name and (node.target.schema == context.schema or not context.schema) then
-        return utils.open_file(node.fileName)
-      end
-    end
-  end
-
-  if context.type == "variable" then
-    local var_path = context.var_name
-    local settings_file = "workflow_settings.yaml"
-    if vim.fn.filereadable(settings_file) == 1 then
-      utils.open_file(settings_file)
-      local file_lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
-      for i, line in ipairs(file_lines) do
-        if line:find("^" .. var_path .. ":") or line:find(" " .. var_path .. ":") then
-          vim.api.nvim_win_set_cursor(0, {i, 0})
-          return
-        end
-      end
-    end
-  end
-
-  if word:find("%.") then
-    local parts = vim.split(word, "%.")
-    local js_module = parts[1]
-    local var_name = parts[2]
-
-    local js_path = "includes/" .. js_module .. ".js"
-    local ts_path = "includes/" .. js_module .. ".ts"
-    local includes_file = vim.fn.filereadable(ts_path) == 1 and ts_path or js_path
-
-    if vim.fn.filereadable(includes_file) == 1 then
-      utils.open_file(includes_file)
-      local file_lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
-      local patterns = {
-        "const%s+" .. var_name .. "%s*=",
-        "export%s+const%s+" .. var_name .. "%s*=",
-        "let%s+" .. var_name .. "%s*=",
-        "function%s+" .. var_name .. "%s*%(",
-        "export%s+function%s+" .. var_name .. "%s*%(",
-        var_name .. "%s*[:=]%s*function"
-      }
-      for i, line in ipairs(file_lines) do
-        for _, pattern in ipairs(patterns) do
-          if line:find(pattern) then
-            vim.api.nvim_win_set_cursor(0, {i, 0})
-            return
-          end
-        end
-      end
-      return
-    end
-  end
-
-  local blocks = parser.get_sqlx_blocks()
-  local var_patterns = {
-    "const%s+" .. word .. "%s*=",
-    "let%s+" .. word .. "%s*=",
-    "var%s+" .. word .. "%s*=",
-    "function%s+" .. word .. "%s*%(",
-    word .. "%s*[:=]%s*function"
-  }
-
-  if blocks.js.exists then
-    for i = blocks.js.start_line, blocks.js.end_line do
-      local line = lines[i]
-      for _, pattern in ipairs(var_patterns) do
-        if line:find(pattern) then
-          vim.api.nvim_win_set_cursor(0, {i, 0})
-          return
-        end
-      end
-    end
+  local location = find_symbol_location()
+  if location then
+    local path = location.uri:gsub("^file://", "")
+    utils.open_file(path)
+    vim.api.nvim_win_set_cursor(0, { location.range.start.line + 1, location.range.start.character })
+  else
+    utils.notify("No definition found.", vim.log.levels.WARN)
   end
 end
 

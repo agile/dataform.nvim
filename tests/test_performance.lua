@@ -107,4 +107,24 @@ T['performance']['compile includes global dataform_args'] = function()
   utils.execute_job = old_job
 end
 
+T['performance']['get_all_models() is fast for large projects'] = function()
+  local df = _G.reload_dataform()
+
+  -- Create a large project
+  local tables = {}
+  for i = 1, 1000 do
+    table.insert(tables, { fileName = "f" .. i, target = { schema = "s", name = "t" .. i } })
+  end
+  df.compiled_project_table = { tables = tables }
+
+  local start = vim.loop.hrtime()
+  for _ = 1, 100 do
+    df.get_all_models()
+  end
+  local duration = (vim.loop.hrtime() - start) / 1e6 -- ms
+
+  -- Optimized version should easily handle this under 100ms (usually < 5ms)
+  MiniTest.expect.equality(duration < 100, true)
+end
+
 return T
