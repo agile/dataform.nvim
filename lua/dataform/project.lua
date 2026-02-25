@@ -1,20 +1,28 @@
 local utils = require("dataform.utils")
 local config = require("dataform.config")
 local state = require("dataform.state")
+local parser = require("dataform.parser")
 
 local dataform = {}
 
--- Expose config and state for backward compatibility and internal access
+-- Expose config, state and parser functions for backward compatibility and internal access
 setmetatable(dataform, {
   __index = function(_, key)
     if key == "config" then return config.options end
-    if state[key] ~= nil then return state[key] end
-    return nil
+    if key == "compiled_project_table" or key == "lsp_client_id" or
+       key == "current_compile_job" or key == "current_dry_run_job" or
+       key == "structural_hashes" then
+      return state[key]
+    end
+    if parser[key] ~= nil then return parser[key] end
+    return rawget(dataform, key)
   end,
   __newindex = function(_, key, value)
     if key == "config" then
       config.options = value
-    elseif state[key] ~= nil then
+    elseif key == "compiled_project_table" or key == "lsp_client_id" or
+           key == "current_compile_job" or key == "current_dry_run_job" or
+           key == "structural_hashes" then
       state[key] = value
     else
       rawset(dataform, key, value)
@@ -33,243 +41,6 @@ end
 
 -- Internal Helpers
 
-local function is_treesitter_available()
-  if not config.options.use_treesitter then return false end
-  local ok, _ = pcall(vim.treesitter.get_parser, 0, "dataform")
-  return ok
-end
-
-local function get_df_args(subcommand, extra_args)
-  local args = { subcommand }
-  -- Add global args from config
-  for _, arg in ipairs(config.options.dataform_args or {}) do
-    table.insert(args, arg)
-  end
-  -- Add subcommand-specific args
-  if extra_args then
-    for _, arg in ipairs(extra_args) do
-      table.insert(args, arg)
-    end
-  end
-  return args
-end
-
-local function get_blocks_via_treesitter()
-  local parser = vim.treesitter.get_parser(0, "dataform")
-  local tree = parser:parse()[1]
-  local root = tree:root()
-
-  local blocks = {
-    config = { exists = false, start_line = 0, end_line = 0 },
-    js = { exists = false, start_line = 0, end_line = 0 },
-    pre_operations = {},
-    post_operations = {},
-    sql = { exists = false, start_line = 0, end_line = 0 }
-  }
-
-  local query = vim.treesitter.query.parse("dataform", [[
-    (config_block) @config
-    (js_block) @js
-    (pre_operations_block) @pre_ops
-    (post_operations_block) @post_ops
-    (sql_block) @sql
-  ]])
-
-  for id, node in query:iter_captures(root, 0) do
-    local name = query.captures[id]
-    local start_row, _, end_row, _ = node:range()
-    -- range() is 0-indexed, but our plugin uses 1-indexed for lines
-    local s = start_row + 1
-    local e = end_row + 1
-
-    if name == "config" then
-      blocks.config = { exists = true, start_line = s, end_line = e }
-    elseif name == "js" then
-      blocks.js = { exists = true, start_line = s, end_line = e }
-    elseif name == "pre_ops" then
-      table.insert(blocks.pre_operations, { exists = true, start_line = s, end_line = e })
-    elseif name == "post_ops" then
-      table.insert(blocks.post_operations, { exists = true, start_line = s, end_line = e })
-    elseif name == "sql" then
-      if not blocks.sql.exists then
-        blocks.sql = { exists = true, start_line = s, end_line = e }
-      else
-        -- Update end_line for subsequent SQL chunks if necessary
-        blocks.sql.end_line = e
-      end
-    end
-  end
-
-  return blocks
-end
-
-function dataform.get_structural_hash(bufnr)
-  local blocks = dataform.get_sqlx_blocks()
-  local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
-  local structure = ""
-
-  if blocks.config.exists then
-    structure = structure .. table.concat(vim.list_slice(lines, blocks.config.start_line, blocks.config.end_line), "\n")
-  end
-  if blocks.js.exists then
-    structure = structure .. table.concat(vim.list_slice(lines, blocks.js.start_line, blocks.js.end_line), "\n")
-  end
-
-  -- Also include all ref/resolve calls in the whole file
-  -- (if a ref is added/removed, we must re-compile)
-  local content = table.concat(lines, "\n")
-  for ref_call in content:gmatch("${%s*ref%s*%(.-%)}?") do
-    structure = structure .. ref_call
-  end
-  for res_call in content:gmatch("${%s*resolve%s*%(.-%)}?") do
-    structure = structure .. res_call
-  end
-
-  return vim.fn.sha256(structure)
-end
-
-local function get_dataform_definitions_file_path()
-  local file = utils.get_current_file_path()
-  utils.log("get_dataform_definitions_file_path: current file=" .. file)
-  if file:find("/definitions/") then
-    return file
-  end
-  utils.log("get_dataform_definitions_file_path: FAILED, file not in /definitions/")
-  return utils.notify(
-    "Error: File does not exist inside dataform definitions folder.",
-    vim.log.levels.ERROR
-  )
-end
-
-function dataform.get_all_models()
-  local tables = vim.deepcopy(state.compiled_project_table.tables or {})
-  local operations = state.compiled_project_table.operations or {}
-  local declarations = state.compiled_project_table.declarations or {}
-  local assertions = state.compiled_project_table.assertions or {}
-  local all_models = vim.fn.extend(tables, operations)
-  all_models = vim.fn.extend(all_models, declarations)
-
-  return vim.fn.extend(all_models, assertions)
-end
-
-function dataform.find_model_by_file_path(all_models, target_file_path)
-  if not target_file_path then return nil end
-  local target_abs = vim.fn.fnamemodify(target_file_path, ":p")
-  utils.log("find_model_by_file_path: target_abs=" .. target_abs)
-
-  for _, model in pairs(all_models) do
-    if model.fileName then
-      local model_abs = vim.fn.fnamemodify(model.fileName, ":p")
-      if model_abs == target_abs then
-        utils.log("find_model_by_file_path: MATCH FOUND for " .. model.target.name)
-        return model
-      end
-    end
-  end
-  utils.log("find_model_by_file_path: NO MATCH FOUND")
-  return nil
-end
-
-local function find_file_name_by_schema_name(all_models, schema, name)
-  for _, model in pairs(all_models) do
-    if model.target.schema == schema and model.target.name == name then
-      return model.fileName
-    end
-  end
-  return nil
-end
-
-function dataform.get_sqlx_blocks()
-  if is_treesitter_available() then
-    local ok, blocks = pcall(get_blocks_via_treesitter)
-    if ok then return blocks end
-  end
-
-  local lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
-  local in_major_block = false
-  local brace_depth = 0
-  local current_block_name = ""
-
-  local blocks = {
-    config = { exists = false, start_line = 0, end_line = 0 },
-    js = { exists = false, start_line = 0, end_line = 0 },
-    pre_operations = {},
-    post_operations = {},
-    sql = { exists = false, start_line = 0, end_line = 0 }
-  }
-
-  local start_line = 0
-
-  for i, line in ipairs(lines) do
-    local trimmed = vim.trim(line)
-    if #trimmed > 0 then
-      local _, open_braces = line:gsub("{", "")
-      local _, closed_braces = line:gsub("}", "")
-      brace_depth = brace_depth + open_braces - closed_braces
-
-      if not in_major_block then
-        if trimmed:find("^config%s*{") then
-          current_block_name = "config"
-          blocks.config.start_line = i
-          in_major_block = true
-          if brace_depth == 0 then
-            blocks.config.end_line = i
-            blocks.config.exists = true
-            in_major_block = false
-          end
-        elseif trimmed:find("^js%s*{") then
-          current_block_name = "js"
-          blocks.js.start_line = i
-          in_major_block = true
-          if brace_depth == 0 then
-            blocks.js.end_line = i
-            blocks.js.exists = true
-            in_major_block = false
-          end
-        elseif trimmed:find("^pre_operations%s*{") then
-          current_block_name = "pre_operations"
-          start_line = i
-          in_major_block = true
-          if brace_depth == 0 then
-            table.insert(blocks.pre_operations, { start_line = i, end_line = i, exists = true })
-            in_major_block = false
-          end
-        elseif trimmed:find("^post_operations%s*{") then
-          current_block_name = "post_operations"
-          start_line = i
-          in_major_block = true
-          if brace_depth == 0 then
-            table.insert(blocks.post_operations, { start_line = i, end_line = i, exists = true })
-            in_major_block = false
-          end
-        else
-          if not blocks.sql.exists then
-            blocks.sql.start_line = i
-            blocks.sql.exists = true
-          end
-          blocks.sql.end_line = i
-        end
-      elseif brace_depth == 0 then
-        if current_block_name == "config" then
-          blocks.config.end_line = i
-          blocks.config.exists = true
-        elseif current_block_name == "js" then
-          blocks.js.end_line = i
-          blocks.js.exists = true
-        elseif current_block_name == "pre_operations" then
-          table.insert(blocks.pre_operations, { start_line = start_line, end_line = i, exists = true })
-        elseif current_block_name == "post_operations" then
-          table.insert(blocks.post_operations, { start_line = start_line, end_line = i, exists = true })
-        end
-        in_major_block = false
-        current_block_name = ""
-      end
-    end
-  end
-  return blocks
-end
-
----@param user_config DataformUserConfig?
 function dataform.get_lsp_config(user_lsp_opts)
   local lsp_opts = user_lsp_opts or {}
 
@@ -332,7 +103,7 @@ function dataform.get_lsp_config(user_lsp_opts)
           callback(nil, items)
         elseif method == "textDocument/hover" then
           local context = dataform.get_context_at_cursor()
-          local all_models = dataform.get_all_models()
+          local all_models = parser.get_all_models()
           local hover_content = {}
 
           if context.type == "table" then
@@ -386,7 +157,7 @@ function dataform.get_lsp_config(user_lsp_opts)
           end
         elseif method == "textDocument/definition" then
           local context = dataform.get_context_at_cursor()
-          local all_models = dataform.get_all_models()
+          local all_models = parser.get_all_models()
 
           if context.type == "table" then
             for _, node in pairs(all_models) do
@@ -453,7 +224,7 @@ function dataform.get_lsp_config(user_lsp_opts)
           end
           callback(nil, locations)
         elseif method == "textDocument/documentSymbol" then
-          local blocks = dataform.get_sqlx_blocks()
+          local blocks = parser.get_sqlx_blocks()
           local symbols = {}
           if blocks.config.exists then
             table.insert(symbols, {
@@ -488,7 +259,7 @@ function dataform.get_lsp_config(user_lsp_opts)
           callback(nil, workspace_edit)
         elseif method == "textDocument/formatting" then
           local bufnr = vim.uri_to_bufnr(params.textDocument.uri)
-          local blocks = dataform.get_sqlx_blocks()
+          local blocks = parser.get_sqlx_blocks()
           if not blocks.sql.exists then callback(nil, nil) return true, 1 end
           local lines = vim.api.nvim_buf_get_lines(bufnr, blocks.sql.start_line - 1, blocks.sql.end_line, false)
           local tmp_sql = os.tmpname() .. ".sql"
@@ -741,7 +512,7 @@ function dataform.get_context_at_cursor()
   end
 
   -- 5. Check if we are inside a tags block (could be multi-line)
-  local blocks = dataform.get_sqlx_blocks()
+  local blocks = parser.get_sqlx_blocks()
   if blocks.config.exists and row >= blocks.config.start_line and row <= blocks.config.end_line then
     -- We are in config block. Search backwards for 'tags:'
     local is_tag = false
@@ -858,7 +629,7 @@ function dataform.go_to_ref()
   end
 
   -- Search for local JS definition
-  local blocks = dataform.get_sqlx_blocks()
+  local blocks = parser.get_sqlx_blocks()
   local var_patterns = {
     "const%s+" .. word .. "%s*=",
     "let%s+" .. word .. "%s*=",
@@ -888,7 +659,7 @@ function dataform.hover()
   local hover_content = {}
 
   if context.type == "table" then
-    local all_models = dataform.get_all_models()
+    local all_models = parser.get_all_models()
     local found = false
     for _, node in pairs(all_models) do
       if node.target.name == context.table_name and (not context.schema or node.target.schema == context.schema) then
@@ -932,7 +703,7 @@ function dataform.hover()
 
   -- Column hover
   if #hover_content == 0 then
-    local all_models = dataform.get_all_models()
+    local all_models = parser.get_all_models()
     local found_columns = {}
     for _, node in pairs(all_models) do
       if node.actionDescriptor and node.actionDescriptor.columns then
@@ -1149,7 +920,7 @@ end
 
 function dataform.format()
   local bufnr = vim.api.nvim_get_current_buf()
-  local blocks = dataform.get_sqlx_blocks()
+  local blocks = parser.get_sqlx_blocks()
   local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
 
   if not blocks.sql.exists or not config.options.formatter_bin or config.options.formatter_bin == "" then
@@ -1193,14 +964,14 @@ end
 
 function dataform.show_dependency_tree(models)
   utils.log("show_dependency_tree: triggered")
-  local all_models = dataform.get_all_models()
+  local all_models = parser.get_all_models()
   local target_models = {}
 
   if models then
     target_models = models
   else
-    local target_file_path = get_dataform_definitions_file_path()
-    local target_model = dataform.find_model_by_file_path(all_models, target_file_path)
+    local target_file_path = utils.get_dataform_definitions_file_path()
+    local target_model = parser.find_model_by_file_path(all_models, target_file_path)
     if target_model then
       table.insert(target_models, target_model)
     end
@@ -1276,7 +1047,7 @@ end
 
 function dataform.show_tag_dependency_tree(tag)
   if not tag or tag == "" then return end
-  local all_models = dataform.get_all_models()
+  local all_models = parser.get_all_models()
   local filtered = {}
   for _, model in pairs(all_models) do
     if model.tags then
@@ -1302,7 +1073,7 @@ function dataform.estimate_tag_cost(tag)
     return
   end
 
-  local all_models = dataform.get_all_models()
+  local all_models = parser.get_all_models()
   local filtered = {}
   for _, model in pairs(all_models) do
     if model.tags then
@@ -1366,9 +1137,9 @@ function dataform.estimate_tag_cost(tag)
 end
 
 function dataform.show_dry_run_virtual_text()
-  local all_models = dataform.get_all_models()
-  local target_file_path = get_dataform_definitions_file_path()
-  local model = dataform.find_model_by_file_path(all_models, target_file_path)
+  local all_models = parser.get_all_models()
+  local target_file_path = utils.get_dataform_definitions_file_path()
+  local model = parser.find_model_by_file_path(all_models, target_file_path)
 
   if not model or not model.query then return end
 
@@ -1420,7 +1191,7 @@ end
 function dataform.compile(on_success)
   local bufnr = vim.api.nvim_get_current_buf()
   local file_path = utils.get_current_file_path()
-  local new_hash = dataform.get_structural_hash(bufnr)
+  local new_hash = parser.get_structural_hash(bufnr)
 
   -- If hash matches, skip compile but still trigger success callback
   if state.structural_hashes[file_path] == new_hash then
@@ -1436,7 +1207,7 @@ function dataform.compile(on_success)
     state.current_compile_job = nil
   end
 
-  local args = get_df_args("compile", { "--json" })
+  local args = parser.get_df_args("compile", { "--json" })
   state.current_compile_job = utils.execute_job(config.options.dataform_bin, args, {
     json = true,
     quiet = true,
@@ -1477,9 +1248,9 @@ function dataform.compile(on_success)
   })
 end
 function dataform.get_compiled_sql_job(incremental)
-  local all_models = dataform.get_all_models()
-  local target_file_path = get_dataform_definitions_file_path()
-  local table = find_model_by_file_path(all_models, target_file_path)
+  local all_models = parser.get_all_models()
+  local target_file_path = utils.get_dataform_definitions_file_path()
+  local table = parser.find_model_by_file_path(all_models, target_file_path)
 
   if table then
     local preOpsKey = incremental and "incrementalPreOps" or "preOps"
@@ -1517,7 +1288,7 @@ function dataform.get_compiled_sql_job(incremental)
 end
 
 function dataform.run_all()
-  local args = get_df_args("run")
+  local args = parser.get_df_args("run")
   local command = config.options.dataform_bin .. " " .. table.concat(args, " ")
   local status, content = utils.os_execute_with_status(command)
   if status == 0 then
@@ -1534,7 +1305,7 @@ end
 
 function dataform.run_tag(args)
   local tags = args or ""
-  local df_args = get_df_args("run", { "--tags=" .. tags })
+  local df_args = parser.get_df_args("run", { "--tags=" .. tags })
   local command = config.options.dataform_bin .. " " .. table.concat(df_args, " ")
   local status, content = utils.os_execute_with_status(command)
   if status == 0 then
@@ -1552,13 +1323,13 @@ end
 
 function dataform.run_action_job(full_refresh)
   local full_refresh = full_refresh or false
-  local all_models = dataform.get_all_models()
-  local target_file_path = get_dataform_definitions_file_path()
-  local table = dataform.find_model_by_file_path(all_models, target_file_path)
+  local all_models = parser.get_all_models()
+  local target_file_path = utils.get_dataform_definitions_file_path()
+  local table = parser.find_model_by_file_path(all_models, target_file_path)
 
   if table then
     local action = table.target.database .. "." .. table.target.schema .. "." .. table.target.name
-    local df_args = get_df_args("run", { "--full-refresh=" .. tostring(full_refresh), "--actions=" .. action })
+    local df_args = parser.get_df_args("run", { "--full-refresh=" .. tostring(full_refresh), "--actions=" .. action })
     local command = config.options.dataform_bin .. " " .. table.concat(df_args, " ")
 
     local status, content = utils.os_execute_with_status(command)
@@ -1579,7 +1350,7 @@ end
 function dataform.run_assertions_job()
   local assertions = state.compiled_project_table.assertions or {}
   local target_assertions = {}
-  local target_file_path = get_dataform_definitions_file_path()
+  local target_file_path = utils.get_dataform_definitions_file_path()
   if not target_file_path then return end
   local target_abs = vim.fn.fnamemodify(target_file_path, ":p")
 
@@ -1598,7 +1369,7 @@ function dataform.run_assertions_job()
   end
 
   for _, assertion in pairs(target_assertions) do
-    local df_args = get_df_args("run", { "--actions=" .. assertion })
+    local df_args = parser.get_df_args("run", { "--actions=" .. assertion })
     local command = config.options.dataform_bin .. " " .. table.concat(df_args, " ")
     local status, content = utils.os_execute_with_status(command)
 
@@ -1617,9 +1388,9 @@ function dataform.run_assertions_job()
 end
 
 function dataform.find_model_dependents()
-  local all_models = dataform.get_all_models()
-  local target_file_path = get_dataform_definitions_file_path()
-  local target_model = dataform.find_model_by_file_path(all_models, target_file_path)
+  local all_models = parser.get_all_models()
+  local target_file_path = utils.get_dataform_definitions_file_path()
+  local target_model = parser.find_model_by_file_path(all_models, target_file_path)
   local target_paths = {}
 
   if not target_model then
@@ -1644,9 +1415,9 @@ function dataform.find_model_dependents()
 end
 
 function dataform.find_model_dependencies()
-  local all_models = dataform.get_all_models()
-  local target_file_path = get_dataform_definitions_file_path()
-  local target_model = dataform.find_model_by_file_path(all_models, target_file_path)
+  local all_models = parser.get_all_models()
+  local target_file_path = utils.get_dataform_definitions_file_path()
+  local target_model = parser.find_model_by_file_path(all_models, target_file_path)
   local target_paths = {}
 
   if not target_model then
@@ -1658,7 +1429,7 @@ function dataform.find_model_dependencies()
     for _, dependency in pairs(dependencies) do
       local schema = dependency.schema
       local name = dependency.name
-      local target_path = find_file_name_by_schema_name(all_models, schema, name)
+      local target_path = parser.find_file_name_by_schema_name(all_models, schema, name)
       table.insert(target_paths, target_path)
     end
   end
@@ -1704,7 +1475,7 @@ end
 
 function dataform.lint()
   local bufnr = vim.api.nvim_get_current_buf()
-  local blocks = dataform.get_sqlx_blocks()
+  local blocks = parser.get_sqlx_blocks()
   if not blocks.sql.exists or not config.options.linter_bin or config.options.linter_bin == "" then
     return
   end
@@ -1814,7 +1585,7 @@ function dataform.fix_semicolon(bufnr, lnum)
 end
 
 function dataform.add_default_config(bufnr)
-  local blocks = dataform.get_sqlx_blocks()
+  local blocks = parser.get_sqlx_blocks()
   if not blocks.config.exists then
     local content = [[config {
   type: "table",
@@ -1828,7 +1599,7 @@ function dataform.add_default_config(bufnr)
 end
 
 function dataform.add_column_description(col_name)
-  local blocks = dataform.get_sqlx_blocks()
+  local blocks = parser.get_sqlx_blocks()
   if not blocks.config.exists then
     utils.notify("No config block found to add column description.", vim.log.levels.WARN)
     return
@@ -1876,7 +1647,7 @@ end
 function dataform.get_code_actions()
   local context = dataform.get_context_at_cursor()
   local lsp_actions = {}
-  local all_models = dataform.get_all_models()
+  local all_models = parser.get_all_models()
   local bufnr = vim.api.nvim_get_current_buf()
 
   -- 1. Check current diagnostics for fixable errors
@@ -1988,7 +1759,7 @@ function dataform.code_action()
 
   if context.type == "table" then
     -- Check if table exists in graph
-    local all_models = dataform.get_all_models()
+    local all_models = parser.get_all_models()
     local found = false
     for _, node in pairs(all_models) do
       if node.target.name == context.table_name and (not context.schema or node.target.schema == context.schema) then
@@ -2071,7 +1842,7 @@ function dataform.get_rename_edits(old_name, new_name)
   end
 
   -- Also check if we should rename the file itself
-  local all_models = dataform.get_all_models()
+  local all_models = parser.get_all_models()
   for _, model in pairs(all_models) do
     if model.target.name == old_name and model.fileName:find(old_name, 1, true) then
       local new_fileName = model.fileName:gsub(old_name, new_name)

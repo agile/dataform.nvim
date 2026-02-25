@@ -24,7 +24,7 @@ local df_signatures = {
 function signatures.get_signature_for_name(name)
   if df_signatures[name] then return df_signatures[name] end
 
-  local project = require('dataform.project')
+  local parser = require('dataform.parser')
   local utils = require('dataform.utils')
   local lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
 
@@ -37,7 +37,7 @@ function signatures.get_signature_for_name(name)
   }
 
   -- 1. Search in current buffer's JS blocks
-  local blocks = project.get_sqlx_blocks()
+  local blocks = parser.get_sqlx_blocks()
   if blocks.js.exists then
     for i = blocks.js.start_line, blocks.js.end_line do
       local line = lines[i]

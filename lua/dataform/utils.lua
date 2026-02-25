@@ -240,6 +240,19 @@ function utils.parse_dry_run_stats(bq_output)
   return nil
 end
 
+function utils.get_dataform_definitions_file_path()
+  local file = utils.get_current_file_path()
+  utils.log("get_dataform_definitions_file_path: current file=" .. file)
+  if file:find("/definitions/") then
+    return file
+  end
+  utils.log("get_dataform_definitions_file_path: FAILED, file not in /definitions/")
+  return utils.notify(
+    "Error: File does not exist inside dataform definitions folder.",
+    vim.log.levels.ERROR
+  )
+end
+
 function utils.log(msg)
   local ok, config = pcall(require, "dataform.config")
   if not ok or not config.options or not config.options.logging then return end

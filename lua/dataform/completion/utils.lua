@@ -152,8 +152,8 @@ function M.js_symbols(context_word)
 
   -- 2. Local JS blocks (only if no prefix, or prefix matches local scope - hard to track)
   if prefix == "" then
-    local project = require('dataform.project')
-    local blocks = project.get_sqlx_blocks()
+    local parser = require('dataform.parser')
+    local blocks = parser.get_sqlx_blocks()
     if blocks.js.exists then
       local lines = vim.api.nvim_buf_get_lines(0, blocks.js.start_line - 1, blocks.js.end_line, false)
       local content = table.concat(lines, "\n")
