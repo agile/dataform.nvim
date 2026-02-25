@@ -6,6 +6,9 @@ M.ns = vim.api.nvim_create_namespace("dataform_diagnostics")
 M.vt_ns = vim.api.nvim_create_namespace("dataform_virtual_text")
 M.lint_ns = vim.api.nvim_create_namespace("dataform_linter")
 
+--- Check for unresolved project variables and JS references in a buffer.
+---@param bufnr integer
+---@return table[] List of diagnostics
 function M.check_unresolved_references(bufnr)
   local diagnostics = {}
   local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
@@ -54,6 +57,8 @@ function M.check_unresolved_references(bufnr)
   return diagnostics
 end
 
+--- Update buffer diagnostics based on Dataform compilation results.
+---@param compiled_json table
 function M.set_diagnostics(compiled_json)
   vim.diagnostic.reset(M.ns)
   if not compiled_json then return end
@@ -89,7 +94,7 @@ function M.set_diagnostics(compiled_json)
     end
   end
 
-  for fileName, diagnostics in pairs(diagnostics_by_file) do
+  for fileName, diags in pairs(diagnostics_by_file) do
     -- Robust buffer matching using absolute paths
     local bufnr = -1
     local abs_fileName = vim.fn.fnamemodify(fileName, ":p")
@@ -110,10 +115,10 @@ function M.set_diagnostics(compiled_json)
       if bufnr == vim.api.nvim_get_current_buf() then
         local local_diagnostics = M.check_unresolved_references(bufnr)
         for _, ld in ipairs(local_diagnostics) do
-          table.insert(diagnostics, ld)
+          table.insert(diags, ld)
         end
       end
-      vim.diagnostic.set(M.ns, bufnr, diagnostics)
+      vim.diagnostic.set(M.ns, bufnr, diags)
     end
   end
 
@@ -128,6 +133,7 @@ function M.set_diagnostics(compiled_json)
   end
 end
 
+--- Clear all Dataform compilation diagnostics.
 function M.clear_diagnostics()
   vim.diagnostic.reset(M.ns)
 end

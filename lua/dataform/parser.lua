@@ -58,6 +58,20 @@ local function get_blocks_via_treesitter()
   return blocks
 end
 
+---@class SQLXBlock
+---@field exists boolean
+---@field start_line integer
+---@field end_line integer
+
+---@class SQLXBlocks
+---@field config SQLXBlock
+---@field js SQLXBlock
+---@field pre_operations SQLXBlock[]
+---@field post_operations SQLXBlock[]
+---@field sql SQLXBlock
+
+--- Parse the current SQLX file into its constituent blocks.
+---@return SQLXBlocks
 function M.get_sqlx_blocks()
   if is_treesitter_available() then
     local ok, blocks = pcall(get_blocks_via_treesitter)
@@ -148,6 +162,9 @@ function M.get_sqlx_blocks()
   return blocks
 end
 
+--- Calculate a structural hash of the SQLX file to detect meaningful changes.
+---@param bufnr integer
+---@return string
 function M.get_structural_hash(bufnr)
   local blocks = M.get_sqlx_blocks()
   local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
@@ -173,6 +190,8 @@ function M.get_structural_hash(bufnr)
   return vim.fn.sha256(structure)
 end
 
+--- Get all models (tables, declarations, operations, assertions) from the compiled project.
+---@return table[]
 function M.get_all_models()
   local tables = vim.deepcopy(state.compiled_project_table.tables or {})
   local operations = state.compiled_project_table.operations or {}
@@ -184,6 +203,10 @@ function M.get_all_models()
   return vim.fn.extend(all_models, assertions)
 end
 
+--- Find a model by its source file path.
+---@param all_models table[]
+---@param target_file_path string?
+---@return table|nil
 function M.find_model_by_file_path(all_models, target_file_path)
   if not target_file_path then return nil end
   local target_abs = vim.fn.fnamemodify(target_file_path, ":p")
@@ -199,6 +222,11 @@ function M.find_model_by_file_path(all_models, target_file_path)
   return nil
 end
 
+--- Find a model's file path by its schema and name.
+---@param all_models table[]
+---@param schema string
+---@param name string
+---@return string|nil
 function M.find_file_name_by_schema_name(all_models, schema, name)
   for _, model in pairs(all_models) do
     if model.target.schema == schema and model.target.name == name then
@@ -208,6 +236,10 @@ function M.find_file_name_by_schema_name(all_models, schema, name)
   return nil
 end
 
+--- Get arguments for a Dataform subcommand, merging global and specific args.
+---@param subcommand string
+---@param extra_args string[]?
+---@return string[]
 function M.get_df_args(subcommand, extra_args)
   local args = { subcommand }
   -- Add global args from config
@@ -223,6 +255,21 @@ function M.get_df_args(subcommand, extra_args)
   return args
 end
 
+---@class CursorContext
+---@field word string
+---@field row integer
+---@field col integer
+---@field current_line string
+---@field lines string[]
+---@field type "table"|"variable"|"function"|"js_module"|"tag"|nil
+---@field table_name string?
+---@field schema string?
+---@field var_name string?
+---@field func_name string?
+---@field tag_name string?
+
+--- Extract semantic context at the current cursor position.
+---@return CursorContext
 function M.get_context_at_cursor()
   local cursor_pos = vim.api.nvim_win_get_cursor(0)
   local row, col = cursor_pos[1], cursor_pos[2]

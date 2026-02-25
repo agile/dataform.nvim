@@ -6,6 +6,9 @@ local actions = require("dataform.actions")
 local diagnostics = require("dataform.diagnostics")
 local utils = require("dataform.utils")
 
+--- Get the LSP client configuration.
+---@param user_lsp_opts table?
+---@return table LSP configuration
 function M.get_lsp_config(user_lsp_opts)
   local lsp_opts = user_lsp_opts or {}
 
@@ -266,6 +269,9 @@ function M.get_lsp_config(user_lsp_opts)
   return vim.tbl_deep_extend("force", lsp_config, lsp_opts)
 end
 
+--- Register the Dataform LSP source.
+---@param lsp_opts table?
+---@return integer|nil client_id
 function M.register_lsp_source(lsp_opts)
   if vim.lsp.config then
     local lsp_config = M.get_lsp_config(lsp_opts)
@@ -287,6 +293,7 @@ function M.register_lsp_source(lsp_opts)
   return client_id
 end
 
+--- Go to the definition/reference of the symbol under the cursor.
 function M.go_to_ref()
   local context = parser.get_context_at_cursor()
   local word = context.word
@@ -379,6 +386,7 @@ function M.go_to_ref()
   end
 end
 
+--- Show hover information for the symbol under the cursor.
 function M.hover()
   local context = parser.get_context_at_cursor()
   local word = context.word

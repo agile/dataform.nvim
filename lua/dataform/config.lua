@@ -1,8 +1,8 @@
 local M = {}
 
 ---@class DataformConfig
----@field dataform_bin string Path to dataform binary or wrapper script
----@field dataform_args string[] Global arguments for dataform (e.g. {"--schema-suffix", "dev"})
+---@field dataform_bin string Path to dataform binary or wrapper script.
+---@field dataform_args string[] Global arguments for dataform (e.g. {"--schema-suffix", "dev"}).
 ---@field compile_on_save boolean Automatically compile Dataform project on saving a .sqlx file.
 ---@field format_on_save boolean Automatically format SQL blocks on save.
 ---@field lint_on_save boolean Automatically lint SQL blocks on save.
@@ -15,6 +15,7 @@ local M = {}
 ---@field logging boolean Enable internal logging.
 ---@field clear_log_on_start boolean Clear log file on startup.
 
+---@type DataformConfig
 local default_config = {
   dataform_bin = "dataform",
   dataform_args = {},

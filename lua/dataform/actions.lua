@@ -5,6 +5,7 @@ local config = require("dataform.config")
 local diagnostics = require("dataform.diagnostics")
 local utils = require("dataform.utils")
 
+--- Format the SQL block in the current buffer.
 function M.format()
   local bufnr = vim.api.nvim_get_current_buf()
   local blocks = parser.get_sqlx_blocks()
@@ -49,6 +50,8 @@ function M.format()
   end
 end
 
+--- Show an interactive dependency tree for the specified models or current buffer.
+---@param models table[]?
 function M.show_dependency_tree(models)
   utils.log("show_dependency_tree: triggered")
   local all_models = parser.get_all_models()
@@ -132,6 +135,8 @@ function M.show_dependency_tree(models)
   utils.open_interactive_buffer(table.concat(tree_lines, "\n"), "dataform_tree", "Dataform Dependencies", keymaps)
 end
 
+--- Show dependency tree for all models matching a tag.
+---@param tag string
 function M.show_tag_dependency_tree(tag)
   if not tag or tag == "" then return end
   local all_models = parser.get_all_models()
@@ -154,6 +159,8 @@ function M.show_tag_dependency_tree(tag)
   end
 end
 
+--- Estimate BigQuery cost for all models matching a tag.
+---@param tag string
 function M.estimate_tag_cost(tag)
   if not tag or tag == "" then
     utils.notify("Please provide a tag name.", vim.log.levels.WARN)
@@ -223,6 +230,7 @@ function M.estimate_tag_cost(tag)
   utils.notify(msg, vim.log.levels.INFO)
 end
 
+--- Show dry-run cost and bytes as virtual text in the current buffer.
 function M.show_dry_run_virtual_text()
   local all_models = parser.get_all_models()
   local target_file_path = utils.get_dataform_definitions_file_path()
@@ -271,6 +279,8 @@ function M.show_dry_run_virtual_text()
   })
 end
 
+--- Compile the Dataform project asynchronously.
+---@param on_success function? Callback on successful compilation.
 function M.compile(on_success)
   local bufnr = vim.api.nvim_get_current_buf()
   local file_path = utils.get_current_file_path()
@@ -321,6 +331,8 @@ function M.compile(on_success)
   })
 end
 
+--- Preview the compiled SQL for the current buffer.
+---@param incremental boolean? Whether to use incremental query if available.
 function M.get_compiled_sql_job(incremental)
   local all_models = parser.get_all_models()
   local target_file_path = utils.get_dataform_definitions_file_path()
@@ -361,6 +373,7 @@ function M.get_compiled_sql_job(incremental)
   end
 end
 
+--- Run the entire Dataform project.
 function M.run_all()
   local args = parser.get_df_args("run")
   local command = config.options.dataform_bin .. " " .. table.concat(args, " ")
@@ -371,6 +384,8 @@ function M.run_all()
   return utils.notify("Error: Dataform run failed. \n\n" .. content, vim.log.levels.ERROR)
 end
 
+--- Run Dataform actions matching a tag.
+---@param args string Tag name
 function M.run_tag(args)
   local tags = args or ""
   local df_args = parser.get_df_args("run", { "--tags=" .. tags })
@@ -382,6 +397,8 @@ function M.run_tag(args)
   return utils.notify("Error: Dataform tag run failed. \n\n" .. content, vim.log.levels.ERROR)
 end
 
+--- Run the Dataform action defined in the current buffer.
+---@param full_refresh boolean?
 function M.run_action_job(full_refresh)
   full_refresh = full_refresh or false
   local all_models = parser.get_all_models()
@@ -401,6 +418,7 @@ function M.run_action_job(full_refresh)
   end
 end
 
+--- Run assertions for the current model.
 function M.run_assertions_job()
   local assertions = state.compiled_project_table.assertions or {}
   local target_assertions = {}
@@ -432,6 +450,7 @@ function M.run_assertions_job()
   end
 end
 
+--- Find and show models that depend on the current model.
 function M.find_model_dependents()
   local all_models = parser.get_all_models()
   local target_file_path = utils.get_dataform_definitions_file_path()
@@ -459,6 +478,7 @@ function M.find_model_dependents()
   return utils.custom_picker("Model Dependents", target_paths)
 end
 
+--- Find and show models that the current model depends on.
 function M.find_model_dependencies()
   local all_models = parser.get_all_models()
   local target_file_path = utils.get_dataform_definitions_file_path()
@@ -482,6 +502,7 @@ function M.find_model_dependencies()
   return utils.custom_picker("Model Dependencies", target_paths)
 end
 
+--- Helper to trigger compilation on save.
 function M.compile_on_save()
   if config.options.compile_on_save then
     M.compile(function()
@@ -494,30 +515,35 @@ function M.compile_on_save()
   end
 end
 
+--- Toggle the 'compile_on_save' setting.
 function M.toggle_compile_on_save()
   config.options.compile_on_save = not config.options.compile_on_save
   local status = config.options.compile_on_save and "enabled" or "disabled"
   utils.notify("Dataform compile on save " .. status .. ".", vim.log.levels.INFO)
 end
 
+--- Helper to trigger formatting on save.
 function M.format_on_save()
   if config.options.format_on_save then
     M.format()
   end
 end
 
+--- Toggle the 'format_on_save' setting.
 function M.toggle_format_on_save()
   config.options.format_on_save = not config.options.format_on_save
   local status = config.options.format_on_save and "enabled" or "disabled"
   utils.notify("Dataform format on save " .. status .. ".", vim.log.levels.INFO)
 end
 
+--- Toggle the 'lint_on_save' setting.
 function M.toggle_lint_on_save()
   config.options.lint_on_save = not config.options.lint_on_save
   local status = config.options.lint_on_save and "enabled" or "disabled"
   utils.notify("Dataform lint on save " .. status .. ".", vim.log.levels.INFO)
 end
 
+--- Lint the SQL block in the current buffer using the configured linter.
 function M.lint()
   local bufnr = vim.api.nvim_get_current_buf()
   local blocks = parser.get_sqlx_blocks()
@@ -567,6 +593,7 @@ function M.lint()
   })
 end
 
+--- Toggle the preview style between 'float' and 'vsplit'.
 function M.toggle_preview_style()
   if config.options.preview_style == "float" then
     config.options.preview_style = "vsplit"
@@ -576,18 +603,23 @@ function M.toggle_preview_style()
   utils.notify("Dataform preview style set to: " .. config.options.preview_style, vim.log.levels.INFO)
 end
 
+--- Toggle Tree-sitter integration for block parsing.
 function M.toggle_treesitter()
   config.options.use_treesitter = not config.options.use_treesitter
   local status = config.options.use_treesitter and "enabled" or "disabled"
   utils.notify("Dataform Tree-sitter integration " .. status .. ".", vim.log.levels.INFO)
 end
 
+--- Toggle internal debug logging.
 function M.toggle_logging()
   config.options.logging = not config.options.logging
   local status = config.options.logging and "enabled" or "disabled"
   utils.notify("Dataform logging " .. status .. ".", vim.log.levels.INFO)
 end
 
+--- Create a new Dataform declaration (.sqlx) for a missing reference.
+---@param schema string?
+---@param name string
 function M.create_declaration(schema, name)
   local file_path = "definitions/sources/" .. (schema or "external") .. "/" .. name .. ".sqlx"
   local dir_path = vim.fn.fnamemodify(file_path, ":h")
@@ -619,6 +651,9 @@ function M.create_declaration(schema, name)
   end
 end
 
+--- Fix a trailing semicolon error in a buffer.
+---@param bufnr integer
+---@param lnum integer 0-indexed line number
 function M.fix_semicolon(bufnr, lnum)
   local line = vim.api.nvim_buf_get_lines(bufnr, lnum, lnum + 1, false)[1]
   if line then
@@ -628,6 +663,8 @@ function M.fix_semicolon(bufnr, lnum)
   end
 end
 
+--- Add a default config block to a new SQLX file.
+---@param bufnr integer
 function M.add_default_config(bufnr)
   local blocks = parser.get_sqlx_blocks()
   if not blocks.config.exists then
@@ -642,6 +679,8 @@ function M.add_default_config(bufnr)
   end
 end
 
+--- Add a missing column description to the config block.
+---@param col_name string
 function M.add_column_description(col_name)
   local blocks = parser.get_sqlx_blocks()
   if not blocks.config.exists then
@@ -685,6 +724,8 @@ function M.add_column_description(col_name)
   end
 end
 
+--- Get available code actions for the LSP client.
+---@return table[] List of LSP code actions
 function M.get_code_actions()
   local df = require('dataform')
   local context = df.get_context_at_cursor()
@@ -789,10 +830,11 @@ function M.get_code_actions()
   return lsp_actions
 end
 
+--- Show a selection UI for available code actions.
 function M.code_action()
   local df = require('dataform')
   local context = df.get_context_at_cursor()
-  local actions = {}
+  local actions_list = {}
 
   if context.type == "table" then
     local all_models = parser.get_all_models()
@@ -805,7 +847,7 @@ function M.code_action()
     end
 
     if not found then
-      table.insert(actions, {
+      table.insert(actions_list, {
         title = "Create declaration for '" .. context.table_name .. "'",
         handler = function() M.create_declaration(context.schema, context.table_name) end
       })
@@ -813,18 +855,18 @@ function M.code_action()
   end
 
   if context.type == "tag" then
-    table.insert(actions, {
+    table.insert(actions_list, {
       title = "Show dependency tree for tag '" .. context.tag_name .. "'",
       handler = function() M.show_tag_dependency_tree(context.tag_name) end
     })
   end
 
-  if #actions == 0 then
+  if #actions_list == 0 then
     utils.notify("No code actions available at cursor.", vim.log.levels.INFO)
     return
   end
 
-  vim.ui.select(actions, {
+  vim.ui.select(actions_list, {
     prompt = "Dataform Code Actions:",
     format_item = function(item) return item.title end,
   }, function(choice)
@@ -834,12 +876,16 @@ function M.code_action()
   end)
 end
 
+--- Get a set of workspace edits for renaming a model.
+---@param old_name string
+---@param new_name string
+---@return table WorkspaceEdit
 function M.get_rename_edits(old_name, new_name)
   local search_patterns = {
-    "ref%s*%(%s*([\"'][^\"']+[\"']%s*,%s*)?[\"']" .. old_name .. "[\"']%s*%)",
-    "resolve%s*%(%s*([\"'][^\"']+[\"']%s*,%s*)?[\"']" .. old_name .. "[\"']%s*%)",
-    "dependencies%s*:%s*%[[^%]]*[\"']" .. old_name .. "[\"'][^%]]*%]",
-    'name%s*:%s*["\']' .. old_name .. '["\']'
+    "ref%s*%(%s*([\"'][^\"']+[\"']%s*,%s*)?[\"']" .. old_name:gsub("%.", "%.") .. "[\"']%s*%)",
+    "resolve%s*%(%s*([\"'][^\"']+[\"']%s*,%s*)?[\"']" .. old_name:gsub("%.", "%.") .. "[\"']%s*%)",
+    "dependencies%s*:%s*%[[^%]]*[\"']" .. old_name:gsub("%.", "%.") .. "[\"'][^%]]*%]",
+    'name%s*:%s*["\']' .. old_name:gsub("%.", "%.") .. '["\']'
   }
 
   local combined_pattern = table.concat(search_patterns, "|")
@@ -891,7 +937,8 @@ function M.get_rename_edits(old_name, new_name)
   }
 end
 
-function M.find_variable_references()
+--- Find and show all references to the symbol under the cursor.
+function M.find_references()
   local df = require('dataform')
   local context = df.get_context_at_cursor()
   local word = context.word
