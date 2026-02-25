@@ -37,7 +37,7 @@ syn sync   ccomment sqlxSqlComment
 
 " SQL Dialects
 " ---------------------
-"  
+"
 " These should be keywords, statements, operators, and those types of thing.
 " Note that "group-name" should follow the following pattern in order to not
 " collide with the javascript "group-name"s:
@@ -55,7 +55,7 @@ syn sync   ccomment sqlxSqlComment
 "
 "         sqlx_dialect = 'some_supported_dialect'
 "
-"   - User sets the dialect via the variable 'g:sqlx_dialect' @TODO 
+"   - User sets the dialect via the variable 'g:sqlx_dialect' @TODO
 let filename = 'base'
 
 if !exists("g:sqlx_dialect")
@@ -100,7 +100,7 @@ hi def link sqlxTodo         Todo
 
 " Javascript Syntax
 " ---------------------
-" 
+"
 " SQLX allows for full on javascript code blocks:
 " - js {...}      = All JavaScript except module related stuff (...I think)
 " - config {...}  = Anything that can be defined within an 'Object'

@@ -6,3 +6,5 @@ repos:
       - id: trailing-whitespace
       - id: check-merge-conflict
       - id: no-commit-to-branch
+      - id: mixed-line-ending
+        args: [--fix=lf]

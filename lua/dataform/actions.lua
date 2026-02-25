@@ -77,6 +77,10 @@ function M.show_dependency_tree(models)
   local highlights = {} -- { { line, col_start, col_end, group }, ... }
   local current_file = utils.get_current_file_path()
 
+  local title = #target_models == 1
+    and ("Dependency Tree for: " .. target_models[1].target.schema .. "." .. target_models[1].target.name)
+    or "Scoped Dependency Tree"
+
   table.insert(tree_lines, title)
   table.insert(tree_lines, string.rep("=", #tree_lines[1]))
   table.insert(tree_lines, "")

@@ -26,4 +26,3 @@ If you'd like to contribute code to dataform.nvim, you can do so by submitting a
 ### Providing Feedback
 
 Your feedback is valuable! If you have any suggestions, questions, or comments about dataform.nvim, please feel free to [open an issue](https://github.com/magal1337/dataform.nvim/issues/new) to discuss it.
-

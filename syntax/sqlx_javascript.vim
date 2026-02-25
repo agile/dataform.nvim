@@ -202,7 +202,7 @@ syn match sqlxJsFunction      /\<function\>/ skipwhite skipempty nextgroup=sqlxJ
 syn match sqlxJsArrowFunction /=>/           skipwhite skipempty nextgroup=sqlxJsFuncBlock,sqlxJsCommentFunction
 syn match sqlxJsArrowFunction /()\ze\s*=>/   skipwhite skipempty nextgroup=sqlxJsArrowFunction
 syn match sqlxJsArrowFunction /_\ze\s*=>/    skipwhite skipempty nextgroup=sqlxJsArrowFunction
-  
+
 syn cluster sqlxJsExpression  contains=sqlxJsBracket,sqlxJsParen,sqlxJsObject,sqlxJsTernaryIf,sqlxJsTaggedTemplate,sqlxJsTemplateString,sqlxJsString,sqlxJsRegexpString,sqlxJsNumber,sqlxJsFloat,sqlxJsOperator,sqlxJsOperatorKeyword,sqlxJsBooleanTrue,sqlxJsBooleanFalse,sqlxJsNull,sqlxJsFunction,sqlxJsArrowFunction,sqlxJsGlobalObjects,sqlxJsExceptions,sqlxJsFuncCall,sqlxJsUndefined,sqlxJsNan,sqlxJsPrototype,sqlxJsBuiltins,sqlxJsNoise,sqlxJsClassDefinition,sqlxJsArrowFunction,sqlxJsArrowFuncArgs,sqlxJsParensError,sqlxJsComment,sqlxJsArguments,sqlxJsThis,sqlxJsSuper,sqlxJsForAwait,sqlxJsAsyncKeyword,sqlxJsStatement,sqlxJsDot
 syn cluster sqlxJsAll         contains=@sqlxJsExpression,sqlxJsStorageClass,sqlxJsConditional,sqlxJsRepeat,sqlxJsReturn,sqlxJsException,sqlxJsTry,sqlxJsNoise
 

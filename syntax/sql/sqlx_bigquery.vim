@@ -76,7 +76,7 @@ syn keyword sqlxSqlFunction st_within st_area st_distance st_length st_maxdistan
 syn keyword sqlxSqlFunction safe_convert_bytes_to_string safe_offset safe_ordinal soundex split start_with stddev stddev_pop stddev_samp strpos string string_agg substr sum
 syn keyword sqlxSqlFunction tan tanh time time_add time_sub time_diff time_trunc timestamp timestamp_add timestamp_sub timestamp_diff timestamp_trunc timestamp_seconds
 syn keyword sqlxSqlFunction timestamp_millis timestamp_micros to_json_string to_base32 to_base64 to_code_points to_hex translate trim trunc
-syn keyword sqlxSqlFunction unicode unix_date unix_seconds unix_millis unix_micros upper 
+syn keyword sqlxSqlFunction unicode unix_date unix_seconds unix_millis unix_micros upper
 syn keyword sqlxSqlFunction variance var_pop var_samp
 
 
