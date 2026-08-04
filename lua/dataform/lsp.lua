@@ -443,7 +443,7 @@ function M.register_lsp_source(lsp_opts)
   end
 
   local lsp_config = M.get_lsp_config(lsp_opts)
-  local client_id = vim.lsp.start_client(lsp_config)
+  local client_id = vim.lsp.start(lsp_config)
   state.lsp_client_id = client_id
 
   return client_id
