@@ -27,7 +27,10 @@ local function get_blocks_via_treesitter()
     (js_block) @js
     (pre_operations_block) @pre_ops
     (post_operations_block) @post_ops
-    (sql_block) @sql
+    ; Match only top-level SQL fragments. The Dataform grammar uses the same
+    ; node inside pre_operations and post_operations, which must not be
+    ; included in the main SQL range.
+    (source_file (sql_fragment) @sql)
   ]])
 
   for id, node in query:iter_captures(root, 0) do
